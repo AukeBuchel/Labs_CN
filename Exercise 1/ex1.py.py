@@ -68,7 +68,7 @@ def chatLoop(sock, respTyp, data):
             sendString = sendString.encode("utf-8")
             sock.sendall(sendString)
         elif x.find("@") == 0:
-            x.replace("@" , "")
+            x = x.replace("@" , "")
             xArray = x.split(" ")
             sendString = "SEND " + xArray[0]
             del xArray[0]
