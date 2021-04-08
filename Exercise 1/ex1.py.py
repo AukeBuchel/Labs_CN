@@ -1,4 +1,5 @@
 import socket
+import asyncio
 
 
 
@@ -58,10 +59,24 @@ def errorHandler(data, respTyp):
         print(messageBody)
 
 
+async def pollServer(sock):
+    # wait for a server response
+    sock.settimeout(2)
+    try:
+        incoming = sock.recv(4096)
+        incoming = incoming.decode("utf-8")
+        typeRes = responseType(incoming)
+        errorHandler(incoming, typeRes)
+    except socket.timeout:
+        pass
+
+
 def chatLoop(sock, respTyp, data):
     quitBool = False
+    # asyncio.run(pollServer(sock))
     while quitBool == False:
         # client side input
+        asyncio.run(pollServer(sock))
         x = input()
         if x == "!quit":
             quirBool = True
@@ -82,15 +97,16 @@ def chatLoop(sock, respTyp, data):
             sendString = sendString.encode("utf-8")
             sock.sendall(sendString)
 
-        # wait for a server response
-        sock.settimeout(2)
-        try:
-            incoming = sock.recv(4096)
-            incoming = incoming.decode("utf-8")
-            typeRes = responseType(incoming)
-            errorHandler(incoming, typeRes)
-        except socket.timeout:
-            pass
+        
+        # # wait for a server response
+        # sock.settimeout(2)
+        # try:
+        #     incoming = sock.recv(4096)
+        #     incoming = incoming.decode("utf-8")
+        #     typeRes = responseType(incoming)
+        #     errorHandler(incoming, typeRes)
+        # except socket.timeout:
+        #     pass
             
             
         
