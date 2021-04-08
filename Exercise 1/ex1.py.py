@@ -1,7 +1,6 @@
 import socket
 
 
-
 # function that checks for response type
 def responseType(data):
     if data.find("HELLO") == 0:
@@ -23,6 +22,7 @@ def responseType(data):
     elif data.find("BAD-RQST-BODY") == 0:
         return "BadBody"
 
+
 def errorHandler(data, respTyp):
     if respTyp == "Hello":
         print("Login OK")
@@ -39,7 +39,7 @@ def errorHandler(data, respTyp):
         data = data.replace("WHO-OK", "")
         names = data.split(",")
         nameList = ""
-        for name in names: 
+        for name in names:
             nameList = nameList + name + " "
         print(nameList)
     elif respTyp == "Unknown":
@@ -47,7 +47,7 @@ def errorHandler(data, respTyp):
     elif respTyp == "Sent":
         print("Message sent successfully.")
     elif respTyp == "NewMsg":
-        data = data.replace("DELIVERY" , "")
+        data = data.replace("DELIVERY", "")
         data = data.split(" ")
         notificationString = "Incoming message from " + data[0] + ": "
         print(notificationString)
@@ -91,10 +91,8 @@ def chatLoop(sock, respTyp, data):
             errorHandler(incoming, typeRes)
         except socket.timeout:
             pass
-            
-            
-        
-            
+
+
 # connect to server
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 host = ("3.121.226.198", 5378)
@@ -113,7 +111,7 @@ data = sock.recv(4096)
 if not data:
     # no data found on the socket
     print("Socket closed. Please contact a server administrator.")
-else : 
+else:
     # handshake recieved, check status
     data = data.decode("utf-8")
     respTyp = responseType(data)
