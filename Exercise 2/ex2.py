@@ -12,6 +12,7 @@ class Users:
     def __init__(self):
         self.activeDict = {}
         self.activeList = []
+        self.maxUsers = 70  # must be at least 64
 
     def userExists(self, username):
         if username in self.activeList:
@@ -36,6 +37,14 @@ class Users:
             returnString += ' ' + user
         return returnString.strip()  # remove the first space
 
+    def roomAvailable(self):
+        if len(self.activeList) >= self.maxUsers:
+            print(
+                f"We have {len(self.activeList)} users, there may be {self.maxUsers}")
+            return False
+        else:
+            return True
+
 
 def cleanString(string):
     string = string.strip()
@@ -48,9 +57,10 @@ activeUsers = Users()
 
 
 def handleUser(client, address):
+    connectionAlive = True
     userAuthenticated = False
     currentUser = ''
-    while not userAuthenticated:
+    while (not userAuthenticated) and connectionAlive:
         try:
             receivedData = client.recv(4096)
             if not receivedData:
@@ -58,6 +68,7 @@ def handleUser(client, address):
                 print(
                     f"Connection with {address} was closed (during authentication)")
                 # at least we do not need to remove anyone :)
+                connectionAlive = False
             else:
                 receivedData = receivedData.decode("utf-8")
                 receivedData = cleanString(receivedData)
@@ -85,8 +96,7 @@ def handleUser(client, address):
             client.sendall("BAD-RQST-HDR\n".encode("utf-8"))
             print(errorMessage)
 
-    userStillActive = True
-    while userStillActive:
+    while connectionAlive:
         # just check for all possible commands
         receivedData = client.recv(4096).decode("utf-8")
         # switch statements
@@ -94,7 +104,7 @@ def handleUser(client, address):
             # we lost connection :(
             print(
                 f"Connection with {address} was closed (after authentication)")
-            userStillActive = False
+            connectionAlive = False
             # we also need to remnove this user :(
             activeUsers.removeUser(currentUser)
         else:
@@ -131,7 +141,7 @@ def handleUser(client, address):
                                     message += " " + receivedData[wordIndex]
                             # we send the delivery to using the socket of the receiver
                             receiverSocket.sendall(
-                                f"DELIVERY {currentUser} {message}\n".encode("utf-8"))
+                                f"DELIVERY {currentUser}{message}\n".encode("utf-8"))
                             # we send a confirmation to the original sender of the message
                             client.sendall("SEND-OK\n".encode("utf-8"))
                         except OSError as errorMessage:
@@ -145,6 +155,11 @@ while True:
     # wait for a connection to come in
     (client, address) = sock.accept()
     print(f"New connection from {address}\n")
-    # create a new thread to allow multiple connections
-    thread = threading.Thread(target=handleUser, args=(client, address))
-    thread.start()
+    if activeUsers.roomAvailable():
+        # create a new thread to allow multiple connections (only if the max number of users is not reached)
+        thread = threading.Thread(target=handleUser, args=(client, address))
+        thread.start()
+    else:
+        # sorry, we have no room for you
+        client.sendall("BUSY\n".encode("utf-8"))
+        client.close()
