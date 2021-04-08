@@ -49,10 +49,13 @@ def errorHandler(data, respTyp):
     elif respTyp == "NewMsg":
         data = data.replace("DELIVERY" , "")
         data = data.split(" ")
-        print("Incoming message from " + data[0] + ": ")
+        notificationString = "Incoming message from " + data[0] + ": "
+        print(notificationString)
         del data[0]
+        messageBody = ""
         for word in data:
-            print(" " + word + " ")
+            messageBody = messageBody + " " + word
+        print(messageBody)
 
 
 def chatLoop(sock, respTyp, data):
