@@ -36,16 +36,18 @@ def errorHandler(data, respTyp):
         print("This username is already in use.")
     elif respTyp == "LoggedIn":
         print("These users are logged in: ")
-        data.replace("WHO-OK", "")
-        names = data.split(", ")
+        data = data.replace("WHO-OK", "")
+        names = data.split(",")
+        nameList = ""
         for name in names: 
-            print(name)
+            nameList = nameList + name + " "
+        print(nameList)
     elif respTyp == "Unknown":
         print("This user is not currently online.")
     elif respTyp == "Sent":
         print("Message sent successfully.")
     elif respTyp == "NewMsg":
-        data.replace("DELIVERY" , "")
+        data = data.replace("DELIVERY" , "")
         data = data.split(" ")
         print("Incoming message from " + data[0] + ": ")
         del data[0]
@@ -56,24 +58,16 @@ def errorHandler(data, respTyp):
 def chatLoop(sock, respTyp, data):
     quitBool = False
     while quitBool == False:
-        # wait for a server response
-        incoming = sock.recv(4096)
-        if not incoming:
-            print("No incoming traffic.")
-        else: 
-            incoming = incoming.decode("utf-8")
-            typeRes = responseType(incoming)
-            errorHandler(incoming, typeRes)
-        
         # client side input
         x = input()
         if x == "!quit":
+            quirBool = True
             exit()
-        if x == "!who":
+        elif x == "!who":
             sendString = "WHO\n"
             sendString = sendString.encode("utf-8")
             sock.sendall(sendString)
-        if x.find("@") == 0:
+        elif x.find("@") == 0:
             x.replace("@" , "")
             xArray = x.split(" ")
             sendString = "SEND " + xArray[0]
@@ -84,17 +78,24 @@ def chatLoop(sock, respTyp, data):
             sendString = sendString + "\n"
             sendString = sendString.encode("utf-8")
             sock.sendall(sendString)
-        
+
+        # wait for a server response
+        sock.settimeout(2)
+        try:
+            incoming = sock.recv(4096)
+            incoming = incoming.decode("utf-8")
+            typeRes = responseType(incoming)
+            errorHandler(incoming, typeRes)
+        except socket.timeout:
+            pass
+            
+            
         
             
-
-
-
 # connect to server
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 host = ("3.121.226.198", 5378)
 sock.connect(host)
-
 
 # enter a name
 name = input("Enter name please: ")
