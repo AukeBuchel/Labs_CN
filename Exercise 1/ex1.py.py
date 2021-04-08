@@ -38,24 +38,33 @@ def errorHandler(data, respTyp):
         print("These users are logged in: ")
         data.replace("WHO-OK", "")
         names = data.split(", ")
-        print(names)
+        for name in names: 
+            print(name)
     elif respTyp == "Unknown":
         print("This user is not currently online.")
     elif respTyp == "Sent":
         print("Message sent successfully.")
+    elif respTyp == "NewMsg":
+        data.replace("DELIVERY" , "")
+        data = data.split(" ")
+        print("Incoming message from " + data[0] + ": ")
+        del data[0]
+        for word in data:
+            print(" " + word + " ")
+
 
 def chatLoop(sock, respTyp, data):
     quitBool = False
     while quitBool == False:
         # wait for a server response
         incoming = sock.recv(4096)
-        if incoming:
+        if not incoming:
+            print("No incoming traffic.")
+        else: 
             incoming = incoming.decode("utf-8")
             typeRes = responseType(incoming)
             errorHandler(incoming, typeRes)
-        else: 
-            print("No incoming traffic.")
-
+        
         # client side input
         x = input()
         if x == "!quit":
