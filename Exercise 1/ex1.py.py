@@ -1,5 +1,6 @@
 import socket
-import asyncio
+import time
+# import asyncio
 
 # function that checks for response type
 def responseType(data):
@@ -26,6 +27,7 @@ def responseType(data):
 def errorHandler(data, respTyp):
     if respTyp == "Hello":
         print("Login OK")
+        return True
     elif respTyp == "Busy":
         print("Server is busy at the moment. Please check API documentation.")
     elif respTyp == "BadHeader":
@@ -34,6 +36,7 @@ def errorHandler(data, respTyp):
         print("Bad request body. Please check API documentation.")
     elif respTyp == "Used":
         print("This username is already in use.")
+        return False
     elif respTyp == "LoggedIn":
         print("These users are logged in: ")
         data = data.replace("WHO-OK", "")
@@ -58,23 +61,23 @@ def errorHandler(data, respTyp):
         print(messageBody)
 
 
-async def pollServer(sock):
-    # wait for a server response
-    sock.settimeout(2)
-    try:
-        incoming = sock.recv(4096)
-        incoming = incoming.decode("utf-8")
-        typeRes = responseType(incoming)
-        errorHandler(incoming, typeRes)
-    except socket.timeout:
-        pass
+# async def pollServer(sock):
+#     # wait for a server response
+#     sock.settimeout(2)
+#     try:
+#         incoming = sock.recv(4096)
+#         incoming = incoming.decode("utf-8")
+#         typeRes = responseType(incoming)
+#         errorHandler(incoming, typeRes)
+#     except socket.timeout:
+#         pass
 
 
 def chatLoop(sock, respTyp, data):
     quitBool = False
     while quitBool == False:
         # client side input
-        asyncio.run(pollServer(sock))
+        # asyncio.run(pollServer(sock))
         x = input()
         if x == "!quit":
             quirBool = True
@@ -95,41 +98,55 @@ def chatLoop(sock, respTyp, data):
             sendString = sendString.encode("utf-8")
             sock.sendall(sendString)
 
-        # # wait for a server response
-        # sock.settimeout(2)
-        # try:
-        #     incoming = sock.recv(4096)
-        #     incoming = incoming.decode("utf-8")
-        #     typeRes = responseType(incoming)
-        #     errorHandler(incoming, typeRes)
-        # except socket.timeout:
-        #     pass
+        # wait for a server response
+        sock.settimeout(2)
+        try:
+            incoming = sock.recv(4096)
+            incoming = incoming.decode("utf-8")
+            typeRes = responseType(incoming)
+            errorHandler(incoming, typeRes)
+        except socket.timeout:
+            pass
 
 
 # connect to server
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-host = ("3.121.226.198", 5378)
-sock.connect(host)
+# sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+# host = ("3.121.226.198", 5378)
+# sock.connect(host)
 
-# enter a name
-name = input("Enter name please: ")
+nameOk = False
 
-# send first handshake message
-string_bytes = "HELLO-FROM " + name + "\n"
-string_bytes = string_bytes.encode("utf-8")
-sock.sendall(string_bytes)
+while nameOk == False:
+    if nameOk == True:
+            break
+    
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    host = ("3.121.226.198", 5378)
+    sock.connect(host)
+    # enter a name
+    name = ""
+    name = input("Enter name please: ")
+    string_bytes = ""
 
-# wait for server response, max byte size set to 4096
-data = sock.recv(4096)
-if not data:
-    # no data found on the socket
-    print("Socket closed. Please contact a server administrator.")
-else:
-    # handshake recieved, check status
-    data = data.decode("utf-8")
-    respTyp = responseType(data)
-    errorHandler(data, respTyp)
-    chatLoop(sock, respTyp, data)
+    # send first handshake message
+    string_bytes = "HELLO-FROM " + name + "\n"
+    string_bytes = string_bytes.encode("utf-8")
+    sock.sendall(string_bytes)
+    
+
+    # wait for server response, max byte size set to 4096
+    data = sock.recv(4096)
+    if not data:
+        # no data found on the socket
+        print("Socket unresponsive. Please contact a server administrator.")
+    else:
+        # handshake recieved, check status
+        data = data.decode("utf-8")
+        respTyp = responseType(data)
+        nameOk = errorHandler(data, respTyp)
+        data = ""
+
+chatLoop(sock, respTyp, data)
 
 
 # close the socket like a good programmer ;)
