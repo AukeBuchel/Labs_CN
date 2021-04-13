@@ -1,5 +1,6 @@
 import socket
 import time
+import threading
 # import asyncio
 
 # function that checks for response type
@@ -52,9 +53,9 @@ def errorHandler(data, respTyp):
     elif respTyp == "NewMsg":
         data = data.replace("DELIVERY", "")
         data = data.split(" ")
-        notificationString = "Incoming message from " + data[0] + ": "
+        notificationString = "Incoming message from " + data[1] + ": "
         print(notificationString)
-        del data[0]
+        del data[1]
         messageBody = ""
         for word in data:
             messageBody = messageBody + " " + word
@@ -75,6 +76,11 @@ def errorHandler(data, respTyp):
 
 def chatLoop(sock, respTyp, data):
     quitBool = False
+
+    # sock.listen()
+
+    # poller = select.poll()
+
     while quitBool == False:
         # client side input
         # asyncio.run(pollServer(sock))
@@ -101,6 +107,16 @@ def chatLoop(sock, respTyp, data):
         # wait for a server response
         sock.settimeout(2)
         try:
+            # something like a while loop to keep reading from the socket
+            # until it is empty -> a timeout occurs as no more data is read from the line
+            # incoming = ""
+            # while True:
+            #     msg = sock.recv(1024)
+            #     if len(msg) <= 0:
+            #         break
+            #     incoming = incoming + msg.decode("utf-8")
+
+            # for now, this works
             incoming = sock.recv(4096)
             incoming = incoming.decode("utf-8")
             typeRes = responseType(incoming)
@@ -109,20 +125,19 @@ def chatLoop(sock, respTyp, data):
             pass
 
 
-# connect to server
-# sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-# host = ("3.121.226.198", 5378)
-# sock.connect(host)
-
+# main begins here.
+#  ==========================================================================
 nameOk = False
 
 while nameOk == False:
     if nameOk == True:
             break
     
+    # connect to our server on a port that nobody is listening to currently
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     host = ("3.121.226.198", 5378)
     sock.connect(host)
+
     # enter a name
     name = ""
     name = input("Enter name please: ")
@@ -145,7 +160,6 @@ while nameOk == False:
         respTyp = responseType(data)
         nameOk = errorHandler(data, respTyp)
         data = ""
-
 chatLoop(sock, respTyp, data)
 
 
