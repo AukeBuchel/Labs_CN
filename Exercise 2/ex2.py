@@ -62,7 +62,10 @@ def handleUser(client, address):
     currentUser = ''
     while (not userAuthenticated) and connectionAlive:
         try:
-            receivedData = client.recv(4096)
+            receivedData = ""
+            while "\n" not in receivedData:
+                receivedData += sock.recv(10).decode("utf-8")
+
             if not receivedData:
                 # we lost connection :(
                 print(
@@ -98,7 +101,10 @@ def handleUser(client, address):
 
     while connectionAlive:
         # just check for all possible commands
-        receivedData = client.recv(4096).decode("utf-8")
+        receivedData = ""
+        while "\n" not in receivedData:
+            receivedData += sock.recv(10).decode("utf-8")
+
         # switch statements
         if not receivedData:
             # we lost connection :(
