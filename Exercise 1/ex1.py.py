@@ -3,8 +3,14 @@ import time
 import threading
 # import asyncio
 
-# function that checks for response type
-def responseType(data):
+
+def cleanString(string):
+    string = string.strip()
+    string = string.replace("\n", '')
+    return string
+
+
+def findResponseType(data):
     if data.find("HELLO") == 0:
         return "Hello"
     elif data.find("WHO-OK") == 0:
@@ -23,145 +29,152 @@ def responseType(data):
         return "BadHeader"
     elif data.find("BAD-RQST-BODY") == 0:
         return "BadBody"
+    else:
+        raise("Unhandled response type for this protocol.")
 
 
-def errorHandler(data, respTyp):
+def responseHandler(data, respTyp):
+    class terminalColors:
+        blue = '\033[94m'
+        green = '\033[92m'
+        yellow = '\033[93m'
+        red = '\033[91m'
+        end = '\033[0m'
+        bold = '\033[1m'
+
     if respTyp == "Hello":
-        print("Login OK")
+        print(terminalColors.green + "[OK] " +
+              terminalColors.end + terminalColors.bold + "You are now logged in." + terminalColors.end)
         return True
     elif respTyp == "Busy":
-        print("Server is busy at the moment. Please check API documentation.")
+        print(terminalColors.red +
+              "[ERROR] " + terminalColors.end + terminalColors.bold + "Server is busy at the moment." + terminalColors.end)
     elif respTyp == "BadHeader":
-        print("Bad request header. Please try again.")
+        print(terminalColors.red +
+              "[ERROR] " + terminalColors.end + terminalColors.bold + "A protocol-error occurred (bad header)." + terminalColors.end)
     elif respTyp == "BadBody":
-        print("Bad request body. Please check API documentation.")
+        print(terminalColors.red +
+              "[ERROR] " + terminalColors.end + terminalColors.bold + "A protocol-error occurred (bad body)." + terminalColors.end)
     elif respTyp == "Used":
-        print("This username is already in use.")
+        print(terminalColors.yellow +
+              "[ERROR] " + terminalColors.end + terminalColors.bold + "This username is already in use." + terminalColors.end)
         return False
     elif respTyp == "LoggedIn":
-        print("These users are logged in: ")
         data = data.replace("WHO-OK", "")
         names = data.split(",")
         nameList = ""
         for name in names:
-            nameList = nameList + name + " "
-        print(nameList)
+            nameList += name + " "
+        print(terminalColors.green + "[OK]" +
+              terminalColors.end + terminalColors.bold + " These users are logged in:" + terminalColors.end + nameList)
     elif respTyp == "Unknown":
-        print("This user is not currently online.")
+        print(terminalColors.yellow +
+              "[ERROR] " + terminalColors.end + terminalColors.bold + "The user you tried to reach is currently offline." + terminalColors.end)
     elif respTyp == "Sent":
-        print("Message sent successfully.")
+        print(terminalColors.green + "[OK] " +
+              terminalColors.end + terminalColors.bold + "Your message was sent successfully." + terminalColors.end)
     elif respTyp == "NewMsg":
-        data = data.replace("DELIVERY", "")
-        data = data.split(" ")
-        notificationString = "Incoming message from " + data[1] + ": "
-        print(notificationString)
-        del data[1]
+        data = data.replace("DELIVERY", "").split()
+        sender = data[0]
+        data.pop(0)
         messageBody = ""
         for word in data:
             messageBody = messageBody + " " + word
-        print(messageBody)
+        print(terminalColors.blue + "[MESSAGE] " +
+              terminalColors.end + terminalColors.bold + "@" + sender + ":" + terminalColors.end + messageBody)
+    else:
+        raise("Message could not be handled")
 
 
-# async def pollServer(sock):
-#     # wait for a server response
-#     sock.settimeout(2)
-#     try:
-#         incoming = sock.recv(4096)
-#         incoming = incoming.decode("utf-8")
-#         typeRes = responseType(incoming)
-#         errorHandler(incoming, typeRes)
-#     except socket.timeout:
-#         pass
+def chatInputLoop(sock, userActive):
+    while userActive[0] == True:
+        # just ask for input
+        inputData = input("")
+        if inputData == "!quit":
+            userActive[0] = False
+            quit()
+            sock.close()
+        elif inputData == "!who":
+            # we don't catch the responses in this loop
+            sock.sendall("WHO\n".encode("utf-8"))
+        elif inputData.find("@") == 0:
+            inputData = inputData.replace("@", "")
+            inputData = inputData.split()  # split by spaces
+
+            # item 0 is the receiver of our message
+            sendString = "SEND " + inputData[0]
+            inputData.pop(0)
+
+            # we restore the words in the sentence to a normal string
+            for word in inputData:
+                sendString += " " + word
+
+            sendString += "\n"
+            sock.sendall(sendString.encode("utf-8"))
 
 
-def chatLoop(sock, respTyp, data):
-    quitBool = False
+def chatReceiverLoop(sock, userActive):
+    while userActive[0] == True:
+        receivedData = ""
+        sock.settimeout(1)
 
-    # sock.listen()
+        # not very efficient, scans the whole string over and over again
+        while "\n" not in receivedData and userActive[0] == True:
+            try:
+                receivedData += sock.recv(10).decode("utf-8")
+            except socket.timeout:
+                continue
 
-    # poller = select.poll()
-
-    while quitBool == False:
-        # client side input
-        # asyncio.run(pollServer(sock))
-        x = input()
-        if x == "!quit":
-            quirBool = True
-            exit()
-        elif x == "!who":
-            sendString = "WHO\n"
-            sendString = sendString.encode("utf-8")
-            sock.sendall(sendString)
-        elif x.find("@") == 0:
-            x = x.replace("@" , "")
-            xArray = x.split(" ")
-            sendString = "SEND " + xArray[0]
-            del xArray[0]
-            xlength = len(xArray)
-            for i in range(0, xlength):
-                sendString = sendString + " " + xArray[i]
-            sendString = sendString + "\n"
-            sendString = sendString.encode("utf-8")
-            sock.sendall(sendString)
-
-        # wait for a server response
-        sock.settimeout(2)
-        try:
-            # something like a while loop to keep reading from the socket
-            # until it is empty -> a timeout occurs as no more data is read from the line
-            # incoming = ""
-            # while True:
-            #     msg = sock.recv(1024)
-            #     if len(msg) <= 0:
-            #         break
-            #     incoming = incoming + msg.decode("utf-8")
-
-            # for now, this works
-            incoming = sock.recv(4096)
-            incoming = incoming.decode("utf-8")
-            typeRes = responseType(incoming)
-            errorHandler(incoming, typeRes)
-        except socket.timeout:
-            pass
+        if userActive[0] == True:
+            # we do not need the delimiter anymore
+            receivedData = cleanString(receivedData)
+            # print("receivedData: " + receivedData)
+            resType = findResponseType(receivedData)
+            responseHandler(receivedData, resType)
 
 
-# main begins here.
-#  ==========================================================================
+# mind your scope please (so threads can access the sock object)
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
 nameOk = False
-
 while nameOk == False:
     if nameOk == True:
-            break
-    
-    # connect to our server on a port that nobody is listening to currently
+        break
+
+    # create the socket again since it is not usable after disconnect (on user IN-USE)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    # connect to our server on a port that nobody is listening to currently
     host = ("3.121.226.198", 5378)
+    # host = ("127.0.0.1", 5378)
     sock.connect(host)
 
     # enter a name
-    name = ""
-    name = input("Enter name please: ")
-    string_bytes = ""
+    name = input("Please enter your name:\n")
 
     # send first handshake message
-    string_bytes = "HELLO-FROM " + name + "\n"
-    string_bytes = string_bytes.encode("utf-8")
-    sock.sendall(string_bytes)
-    
+    inputData = "HELLO-FROM " + name + "\n"
+    sock.sendall(inputData.encode("utf-8"))
 
     # wait for server response, max byte size set to 4096
-    data = sock.recv(4096)
-    if not data:
-        # no data found on the socket
-        print("Socket unresponsive. Please contact a server administrator.")
-    else:
-        # handshake recieved, check status
-        data = data.decode("utf-8")
-        respTyp = responseType(data)
-        nameOk = errorHandler(data, respTyp)
-        data = ""
-chatLoop(sock, respTyp, data)
+    receivedData = ""
+    while "\n" not in receivedData:
+        receivedData += sock.recv(10).decode("utf-8")
+        # todo: maybe check for if not data?
+
+    # handshake recieved, check status
+    respTyp = findResponseType(receivedData)
+    nameOk = responseHandler(receivedData, respTyp)
 
 
-# close the socket like a good programmer ;)
-sock.close()
+# ugly fix to pass by reference (so we avoid global variables)
+userActive = []
+userActive.append(True)
+
+sendThread = threading.Thread(target=chatInputLoop, args=(sock, userActive))
+sendThread.daemon = True
+receiveThread = threading.Thread(
+    target=chatReceiverLoop, args=(sock, userActive))
+
+sendThread.start()
+receiveThread.start()
