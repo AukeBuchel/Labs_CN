@@ -3,7 +3,7 @@ import threading
 
 # setup the local server
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-host = ("127.0.0.1", 5378)
+host = ("localhost", 5379)
 sock.bind(host)
 sock.listen()
 
@@ -64,7 +64,7 @@ def handleUser(client, address):
         try:
             receivedData = ""
             while "\n" not in receivedData:
-                receivedData += sock.recv(10).decode("utf-8")
+                receivedData += client.recv(10).decode("utf-8")
 
             if not receivedData:
                 # we lost connection :(
@@ -73,7 +73,6 @@ def handleUser(client, address):
                 # at least we do not need to remove anyone :)
                 connectionAlive = False
             else:
-                receivedData = receivedData.decode("utf-8")
                 receivedData = cleanString(receivedData)
                 # make a list (array if you will) of this string splitted by spaces
                 receivedData = receivedData.split()
@@ -103,7 +102,7 @@ def handleUser(client, address):
         # just check for all possible commands
         receivedData = ""
         while "\n" not in receivedData:
-            receivedData += sock.recv(10).decode("utf-8")
+            receivedData += client.recv(10).decode("utf-8")
 
         # switch statements
         if not receivedData:
