@@ -96,7 +96,7 @@ def responseHandler(data, respTyp):
             print(terminalColors.green + "[" + setting + "]" + terminalColors.end + value + upper)
         print(terminalColors.green + "[" + setting + "]" + terminalColors.end + value)
     elif respTyp == "Set":
-        print(terminalColors.green + [SET-OK] + terminalColors.end)
+        print(terminalColors.green + "[SET-OK]" + terminalColors.end)
 
     else:
         raise("Message could not be handled")
@@ -108,11 +108,12 @@ def chatInputLoop(sock, userActive):
         inputData = input("")
         if inputData == "!quit":
             userActive[0] = False
-            quit()
             sock.close()
+            quit()
         elif inputData == "!who":
+            sendString = "WHO\n".encode("utf-8")
             # we don't catch the responses in this loop
-            sock.sendall("WHO\n".encode("utf-8"))
+            sock.sendto(sendString, host)
         elif inputData.find("@") == 0:
             inputData = inputData.replace("@", "")
             inputData = inputData.split()  # split by spaces
@@ -126,33 +127,34 @@ def chatInputLoop(sock, userActive):
                 sendString += " " + word
 
             sendString += "\n"
-            sock.sendall(sendString.encode("utf-8"))
+            sock.sendto(sendString.encode("utf-8"), host)
         elif inputData.find("SET") == 0:
-            inputData = inputdata.split()
-            if len(inputData) == 3:    
+            inputData = inputData.split()
+            if len(inputData) == 3:
                 sendString = "SET" + inputData[1] + inputData[2]
             elif len(inputData) == 4:
                 sendString = "SET" + inputData[1] + inputData[2] + inputData[3] + "\n"
-                sendString = sendString.encode("utf-8")
-                sock.sendall(sendString)
+            sendString = sendString.encode("utf-8")
+            sock.sendto(sendString, host)
         elif inputData.find("GET") == 0:
             sendString = sendString + "\n"
             sendString = sendString.encode("utf-8")
-            sock.sendall(sendString)
+            sock.sendto(sendString, host)
         elif inputData.find("RESET") == 0:
+            sendString = inputData
             sendString = sendString + "\n"
             sendString = sendString.encode("utf-8")
-            sock.sendall(sendString)
+            sock.sendto(sendString, host)
 
 
 def chatReceiverLoop(sock, userActive):
     while userActive[0] == True:
-        receivedData = ""
+        recievedData = ""
         sock.settimeout(1)
 
         # receivedData = sock.recv(4096).decode("utf-8")
         # not very efficient, scans the whole string over and over again
-        while "\n" not in receivedData and userActive[0] == True:
+        while "\n" not in recievedData and userActive[0] == True:
             try:
                 data, addr = sock.recvfrom(10)
                 recievedData += data.decode("utf-8")
@@ -163,14 +165,15 @@ def chatReceiverLoop(sock, userActive):
 
         if userActive[0] == True:
             # we do not need the delimiter anymore
-            receivedData = cleanString(receivedData)
+            recievedData = cleanString(recievedData)
             # print("receivedData: " + receivedData)
-            resType = findResponseType(receivedData)
-            responseHandler(receivedData, resType)
+            resType = findResponseType(recievedData)
+            responseHandler(recievedData, resType)
 
 
 # mind your scope please (so threads can access the sock object)
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+host = ("3.121.226.198", 5382)
 
 nameOk = False
 while nameOk == False:
@@ -181,7 +184,7 @@ while nameOk == False:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     # connect to our server on a port that nobody is listening to currently
-    host = ("3.121.226.198", 5382)
+    
     # host = ("127.0.0.1", 5379)
     sock.connect(host)
 
@@ -196,16 +199,17 @@ while nameOk == False:
 
     # wait for server response, max byte size set to 4096
     recievedData = ""
-    recievedData, recievedAddr = sock.recvfrom(4096)
+    
     # print("%s" % receivedData)
-    recievedData = recievedData.decode("utf-8")
-    print(recievedAddr)
+    # recievedData = recievedData.decode("utf-8")
 
-    # while "\n" not in receivedData:
-    #     receivedData += sock.recvfrom(10).decode("utf-8")
-    #     iterator += 1
+    while "\n" not in recievedData:
+        data, addr = sock.recvfrom(4096)
+        recievedData += data.decode("utf-8")
+        recievedAddr = addr
 
         # todo: maybe check for if not data?
+    print(recievedAddr)
 
     # handshake recieved, check status
     respTyp = findResponseType(recievedData)
