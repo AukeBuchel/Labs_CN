@@ -145,8 +145,8 @@ while nameOk == False:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     # connect to our server on a port that nobody is listening to currently
-    host = ("3.121.226.198", 5378)
-    # host = ("127.0.0.1", 5378)
+    # host = ("3.121.226.198", 5378)
+    host = ("127.0.0.1", 5379)
     sock.connect(host)
 
     # enter a name
