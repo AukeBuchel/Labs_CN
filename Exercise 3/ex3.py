@@ -87,9 +87,17 @@ def responseHandler(data, respTyp):
         print(terminalColors.blue + "[MESSAGE] " +
               terminalColors.end + terminalColors.bold + "@" + sender + ":" + terminalColors.end + messageBody)
     elif respTyp == "CurrSetting":
-        data = data.replace("")
-        print(terminalColors.green + [])
-        
+        data = data.replace("VALUE", "").split()
+
+        setting = data[0]
+        value = data[1]
+        if len(data) > 2:
+            upper = data
+            print(terminalColors.green + "[" + setting + "]" + terminalColors.end + value + upper)
+        print(terminalColors.green + "[" + setting + "]" + terminalColors.end + value)
+    elif respTyp == "Set":
+        print(terminalColors.green + [SET-OK] + terminalColors.end)
+
     else:
         raise("Message could not be handled")
 
@@ -119,6 +127,22 @@ def chatInputLoop(sock, userActive):
 
             sendString += "\n"
             sock.sendall(sendString.encode("utf-8"))
+        elif inputData.find("SET") == 0:
+            inputData = inputdata.split()
+            if len(inputData) == 3:    
+                sendString = "SET" + inputData[1] + inputData[2]
+            elif len(inputData) == 4:
+                sendString = "SET" + inputData[1] + inputData[2] + inputData[3] + "\n"
+                sendString = sendString.encode("utf-8")
+                sock.sendall(sendString)
+        elif inputData.find("GET") == 0:
+            sendString = sendString + "\n"
+            sendString = sendString.encode("utf-8")
+            sock.sendall(sendString)
+        elif inputData.find("RESET") == 0:
+            sendString = sendString + "\n"
+            sendString = sendString.encode("utf-8")
+            sock.sendall(sendString)
 
 
 def chatReceiverLoop(sock, userActive):
@@ -126,6 +150,7 @@ def chatReceiverLoop(sock, userActive):
         receivedData = ""
         sock.settimeout(1)
 
+        # receivedData = sock.recv(4096).decode("utf-8")
         # not very efficient, scans the whole string over and over again
         while "\n" not in receivedData and userActive[0] == True:
             try:
@@ -153,26 +178,35 @@ while nameOk == False:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     # connect to our server on a port that nobody is listening to currently
-    host = ("3.121.226.198", 5378)
-    # host = ("127.0.0.1", 5378)
+    host = ("3.121.226.198", 5382)
+    # host = ("127.0.0.1", 5379)
     sock.connect(host)
 
     # enter a name
     name = input("Please enter your name:\n")
+    if name == "!quit":
+        exit()
 
     # send first handshake message
     inputData = "HELLO-FROM " + name + "\n"
-    sock.sendall(inputData.encode("utf-8"))
+    sock.sendto(inputData.encode("utf-8"), host)
 
     # wait for server response, max byte size set to 4096
-    receivedData = ""
-    while "\n" not in receivedData:
-        receivedData += sock.recv(10).decode("utf-8")
+    recievedData = ""
+    recievedData, recievedAddr = sock.recvfrom(4096)
+    # print("%s" % receivedData)
+    recievedData = recievedData.decode("utf-8")
+    print(recievedAddr)
+
+    # while "\n" not in receivedData:
+    #     receivedData += sock.recvfrom(10).decode("utf-8")
+    #     iterator += 1
+
         # todo: maybe check for if not data?
 
     # handshake recieved, check status
-    respTyp = findResponseType(receivedData)
-    nameOk = responseHandler(receivedData, respTyp)
+    respTyp = findResponseType(recievedData)
+    nameOk = responseHandler(recievedData, respTyp)
 
 # ugly fix to pass by reference (so we avoid global variables)
 userActive = []
