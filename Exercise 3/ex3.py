@@ -154,7 +154,10 @@ def chatReceiverLoop(sock, userActive):
         # not very efficient, scans the whole string over and over again
         while "\n" not in receivedData and userActive[0] == True:
             try:
-                receivedData += sock.recv(10).decode("utf-8")
+                data, addr = sock.recvfrom(10)
+                recievedData += data.decode("utf-8")
+                recievedAddr = addr
+
             except socket.timeout:
                 continue
 
