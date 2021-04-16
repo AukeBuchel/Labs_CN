@@ -1,7 +1,7 @@
 import socket
 import time
 import threading
-# import asyncio
+
 
 
 def cleanString(string):
@@ -166,11 +166,11 @@ while nameOk == False:
     respTyp = findResponseType(receivedData)
     nameOk = responseHandler(receivedData, respTyp)
 
-
 # ugly fix to pass by reference (so we avoid global variables)
 userActive = []
 userActive.append(True)
 
+# use threading to get into our main chat client functions
 sendThread = threading.Thread(target=chatInputLoop, args=(sock, userActive))
 sendThread.daemon = True
 receiveThread = threading.Thread(
