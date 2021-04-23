@@ -1,8 +1,15 @@
 import socket
 import time
 import threading
+import struct
 
-
+class terminalColors:
+        blue = '\033[94m'
+        green = '\033[92m'
+        yellow = '\033[93m'
+        red = '\033[91m'
+        end = '\033[0m'
+        bold = '\033[1m'
 
 def cleanString(string):
     string = string.strip()
@@ -38,13 +45,13 @@ def findResponseType(data):
 
 
 def responseHandler(data, respTyp, name):
-    class terminalColors:
-        blue = '\033[94m'
-        green = '\033[92m'
-        yellow = '\033[93m'
-        red = '\033[91m'
-        end = '\033[0m'
-        bold = '\033[1m'
+    # class terminalColors:
+    #     blue = '\033[94m'
+    #     green = '\033[92m'
+    #     yellow = '\033[93m'
+    #     red = '\033[91m'
+    #     end = '\033[0m'
+    #     bold = '\033[1m'
     
     if respTyp == "Hello":
         # check that the server sends us the correct name, indicating that our connection request went through without issue.
@@ -58,12 +65,18 @@ def responseHandler(data, respTyp, name):
         else:
             return False
     elif respTyp == "Busy":
+        #  We also need the send loop to end if  this occurs
+        userActive[1] = True
         print(terminalColors.red +
               "[ERROR] " + terminalColors.end + terminalColors.bold + "Server is busy at the moment." + terminalColors.end)
     elif respTyp == "BadHeader":
+        #  We also need the send loop to end if  this occurs
+        userActive[1] = True
         print(terminalColors.red +
               "[ERROR] " + terminalColors.end + terminalColors.bold + "A protocol-error occurred (bad header)." + terminalColors.end)
     elif respTyp == "BadBody":
+        #  We also need the send loop to end if  this occurs
+        userActive[1] = True
         print(terminalColors.red +
               "[ERROR] " + terminalColors.end + terminalColors.bold + "A protocol-error occurred (bad body)." + terminalColors.end)
     elif respTyp == "Used":
@@ -81,11 +94,16 @@ def responseHandler(data, respTyp, name):
         print(terminalColors.green + "[OK]" +
               terminalColors.end + terminalColors.bold + " These users are logged in:" + terminalColors.end + nameList)
     elif respTyp == "Unknown":
+        #  We also need the send loop to end if  this occurs
+        userActive[1] = True
         print(terminalColors.yellow +
               "[ERROR] " + terminalColors.end + terminalColors.bold + "The user you tried to reach is currently offline." + terminalColors.end)
     elif respTyp == "Sent":
+        userActive[1] = True
         print(terminalColors.green + "[OK] " +
               terminalColors.end + terminalColors.bold + "Your message was sent successfully." + terminalColors.end)
+            #   set "global" bool to true so that sending function knows it can stop making new attempts and wait for next input
+        
     elif respTyp == "NewMsg":
         data = data.replace("DELIVERY", "").split()
         sender = data[0]
@@ -136,7 +154,20 @@ def chatInputLoop(sock, userActive):
                 sendString += " " + word
 
             sendString += "\n"
-            sock.sendto(sendString.encode("utf-8"), host)
+            sendString = sendString.encode("utf-8")
+            # sock.sendto(sendString.encode("utf-8"), host)
+            # now we have to somehow make sure our message is sent properly, otherwise, the client should try again until it gets confirmation.
+            # we can do this by checking the second boolean in userActive[]. The response handling thread should change this bool
+            # to true when it recieves a message containing SET-OK, prompting a loop in this function to stop sending the packet over and over again.
+            # We start a timer here when sending to keep track of our send time.
+            while userActive[1] == False:
+                # implementation for checksum, parity or hamming code should be done in this loop.
+                sock.sendto(sendString, host)
+                print(terminalColors.yellow + "[STATUS] " + terminalColors.end + terminalColors.bold+  "Waiting for acknowledgement...\n" + terminalColors.end)
+                time.sleep(1)
+                if userActive[1] == True:
+                    break
+            
         elif inputData.find("SET") == 0:
             inputData = inputData.split()
             if len(inputData) == 3:
@@ -230,6 +261,7 @@ while nameOk == False:
 # ugly fix to pass by reference (so we avoid global variables)
 userActive = []
 userActive.append(True)
+userActive.append(False)
 
 # use threading to get into our main chat client functions
 sendThread = threading.Thread(target=chatInputLoop, args=(sock, userActive))
