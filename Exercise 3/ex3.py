@@ -99,10 +99,10 @@ def responseHandler(data, respTyp, name):
         print(terminalColors.yellow +
               "[ERROR] " + terminalColors.end + terminalColors.bold + "The user you tried to reach is currently offline." + terminalColors.end)
     elif respTyp == "Sent":
+        #   set "global" bool to true so that sending function knows it can stop making new attempts and wait for next input
         userActive[1] = True
         print(terminalColors.green + "[OK] " +
               terminalColors.end + terminalColors.bold + "Your message was sent successfully." + terminalColors.end)
-            #   set "global" bool to true so that sending function knows it can stop making new attempts and wait for next input
         
     elif respTyp == "NewMsg":
         data = data.replace("DELIVERY", "").split()
@@ -155,6 +155,8 @@ def chatInputLoop(sock, userActive):
 
             sendString += "\n"
             sendString = sendString.encode("utf-8")
+            # we do have to reset the acknowledgement bool every time we send or we will never enter our loop again :)
+            userActive[1] = False
             # sock.sendto(sendString.encode("utf-8"), host)
             # now we have to somehow make sure our message is sent properly, otherwise, the client should try again until it gets confirmation.
             # we can do this by checking the second boolean in userActive[]. The response handling thread should change this bool
@@ -167,7 +169,7 @@ def chatInputLoop(sock, userActive):
                 time.sleep(1)
                 if userActive[1] == True:
                     break
-            
+            print("Free from send loop")
         elif inputData.find("SET") == 0:
             inputData = inputData.split()
             if len(inputData) == 3:
