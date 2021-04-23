@@ -311,31 +311,43 @@ requestDummy = {
         "RCODE": False
     },
     'qdcount': 1, 
-    'ancount': 1, 
+    'ancount': 0, 
     'nscount': 0, 
-    'arcount': 1, 
+    'arcount': 0, 
     'requests': [
         {
-            'URL': ['www', 'google', 'com'], 
+            'URL': ['www', 'pchulpcastricum', 'nl'], 
             'qtype': 1, 
             'qclass': 1
         }
-    ], 
+    ],
     'answers': [
-        {
-            'URL': ['www', 'google', 'com'], 
-            'type': 1, 
-            'class': 1, 
-            'ttl': 77, 
-            'rdlength': 4, 
-            'rdata': [172, 217, 17, 68]
-        }
+        # {
+        #     'URL': ['www', 'google', 'com'], 
+        #     'type': 1, 
+        #     'class': 1, 
+        #     'ttl': 77, 
+        #     'rdlength': 4, 
+        #     'rdata': [172, 217, 17, 68]
+        # }
     ]
 }
 
+
+
+
+
 print(decodeRequest(encodeRequest(requestDummy)))
 
-
+host = ("192.168.1.106", 53)
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.bind(host)
+# sock.sendto("test".encode("utf-8"), ('8.8.8.8', 53))
+x = encodeRequest(requestDummy)
+sock.sendto(x, ("198.41.0.4", 53))
+answer = sock.recv(512)
+print(answer)
+print(decodeRequest(answer))
 
 
 # refer to: https://www.cs.swarthmore.edu/~chaganti/cs43/f19/labs/lab3.html for a general workflow that is needed to implement the DNS server
