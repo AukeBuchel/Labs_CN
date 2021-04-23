@@ -1,5 +1,6 @@
 import socket
 import struct  # byte ordering
+import ctypes # to create a buffer
 
 # ============= USED IN PROD =========================
 # # setup the local server (UDP/53)
@@ -17,170 +18,325 @@ import struct  # byte ordering
 # #sock.sendto("yoooo".encode("utf-8"), addr)
 # =====================================================
 
-# for now, we just use a hardcoded byte string (two different byte strings)
-# UDPcontent = b"\x0e\xdb\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x07example\x03com\x00\x00\x01\x00\x01"
-UDPcontent = b"\x78\xca\x81\x80\x00\x01\x00\x01\x00\x00\x00\x01\x03\x77\x77\x77\x06\x67\x6f\x6f\x67\x6c\x65\x03\x63\x6f\x6d\x00\x00\x01\x00\x01\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x4d\x00\x04\xac\xd9\x11\x44\x00\x00\x29\x04\xd0\x00\x00\x00\x00\x00\x00"
 
-# see explanation in the header section of RFC notes below
-DNSheader = struct.Struct("!6H")
+def decodeRequest(UDPcontent):
+    # see explanation in the header section of RFC notes below
+    DNSheader = struct.Struct("!6H")
 
-# get all header rows (6 H's of 2 bytes)
-id, flagsRaw, qdcount, ancount, nscount, arcount = DNSheader.unpack_from(UDPcontent)
+    # get all header rows (6 H's of 2 bytes)
+    id, flagsRaw, qdcount, ancount, nscount, arcount = DNSheader.unpack_from(UDPcontent)
 
-# we cannot access individual bits, so we use AND operations. (see also wireshark logs > Flags)
-flags = {
-    "QR": (flagsRaw & 0x8000) != 0,  # 1000000000000000 dec = 8000 hex (first bit) (boolean bit)
-    "Opcode": (flagsRaw & 0x7800) >> 11,  # 0111100000000000 dec = 7800 hex (4 bits) (value bit on position 14-11 so we shift 11 bits to the right)
-    "AA": (flagsRaw & 0x400) != 0,  # 0000010000000000 dec = 400 hex (1 bit) (boolean bit)
-    "TC": (flagsRaw & 0x200) != 0,  # 0000001000000000 dec = 200 hex (1 bit) (boolean bit)
-    "RD": (flagsRaw & 0x100) != 0,  # 0000000100000000 dec = 100 hex (1 bit) (boolean bit)
-    "RA": (flagsRaw & 0x80) != 0,  # 00000000010000000 dec = 80 hex (1 bit) (boolean bit)
-    "Z": (flagsRaw & 0x70) >> 4,  # 00000000001110000 dec = 70 hex (3 bits) (value bit on position 4-6 so we shift 4 bits to the right)
-    "RCODE": (flagsRaw & 0xF) != 0,  # 0000000000001111 dec = F hex (4 bits) (boolean bit)
+    # we cannot access individual bits, so we use AND operations. (see also wireshark logs > Flags)
+    flags = {
+        "QR": (flagsRaw & 0x8000) != 0,  # 1000000000000000 dec = 8000 hex (first bit) (boolean bit)
+        "Opcode": (flagsRaw & 0x7800) >> 11,  # 0111100000000000 dec = 7800 hex (4 bits) (value bit on position 14-11 so we shift 11 bits to the right)
+        "AA": (flagsRaw & 0x400) != 0,  # 0000010000000000 dec = 400 hex (1 bit) (boolean bit)
+        "TC": (flagsRaw & 0x200) != 0,  # 0000001000000000 dec = 200 hex (1 bit) (boolean bit)
+        "RD": (flagsRaw & 0x100) != 0,  # 0000000100000000 dec = 100 hex (1 bit) (boolean bit)
+        "RA": (flagsRaw & 0x80) != 0,  # 00000000010000000 dec = 80 hex (1 bit) (boolean bit)
+        "Z": (flagsRaw & 0x70) >> 4,  # 00000000001110000 dec = 70 hex (3 bits) (value bit on position 4-6 so we shift 4 bits to the right)
+        "RCODE": (flagsRaw & 0xF) != 0,  # 0000000000001111 dec = F hex (4 bits) (boolean bit)
+    }
+
+    # offset that keeps track of the current byte that we access, DNSheader is 6 * H which is 6 * 16 bits which is 12 * 8 bits so DNSheader.size = 12 (bytes)
+    currentByte = DNSheader.size
+    # a list that is filled with the query objects that are decoded (if any)
+    requests = []
+    # a list that is filled in with the query answers that are decoded (if any)
+    answers = []
+
+    # for each request in the DNS query (qdcount in header)
+    for query in range(qdcount):
+        # according to the RFC, to get qname, we get a length byte followed by the length amount of character bytes
+        domainPartLength, = struct.unpack_from("!B", UDPcontent, currentByte)
+        currentByte += 1
+        # the URL list we will fill with the requested domain parts (TLD is always last item)
+        URL = []
+
+        #0x00 is the delimiter byte, we check for that
+        while domainPartLength != 0:
+            domainPartString = ''
+            for count in range(domainPartLength):
+                # the bytes are characters so we can use 'c' from struct
+                char, = struct.unpack_from("!c", UDPcontent, currentByte)
+                currentByte += 1
+                # append the character to the string
+                domainPartString += char.decode("utf-8")
+            
+            # append the string to the list
+            URL.append(domainPartString)
+
+            domainPartLength, = struct.unpack_from("!B", UDPcontent, currentByte)
+            currentByte += 1
+
+        # to get the qtype and qclass
+        DNSrequest = struct.Struct("!2H")
+        qtype, qclass = DNSrequest.unpack_from(UDPcontent, currentByte)
+        # again, 2H is 4 bytes so DNSrequest.size = 4
+        currentByte += DNSrequest.size
+
+        # we build the request object for later access
+        requestObject = {
+            'URL': URL,
+            'qtype': qtype,
+            'qclass': qclass
+        }
+
+        # we add the request object to the list of request objects
+        requests.append(requestObject)
+
+    # for each answer in the DNS query (ancount in header)
+    for answer in range(ancount):
+        # todo: check if name actually is a pointer (& 11.......)
+        # NAME is a pointer as described by the RFC
+        domainPointer, = struct.unpack_from("!H", UDPcontent, currentByte)
+        currentByte += 2
+
+        # check if it is really a pointer (starts with two 1-bits) or just a regular domain description. Both are allowed by the RFC
+        isPointer = (domainPointer & 0xc000) != 0
+
+        # if it is indeed a pointer, we set the current byte to the byte pointed to by this pointer, else we need to discard the pointer bytes
+        if isPointer:
+            # according to the RFC, pointer bytes start with 2 1-bits (to distinguish them from labels, see RFC) so we need to remove those
+            domainPointer = domainPointer & 0x3ff # 0011111111111111 bin = 3ff hex 
+            # we will access the pointer from now on so we need to store the currentByte position to continue the program later
+            originalCurrentByte = currentByte
+            # subtract the byte offset from the current byte (subtraction is possible since pointers are only used for earlier occurrences, see RFC)
+            currentByte = domainPointer
+        else:
+            # we need to 'reread' the bytes because they are not used for a pointer but for labels
+            currentByte -= 2
+
+        # repetition of code, oops
+        # according to the RFC, to get qname, we get a length byte followed by the length amount of character bytes
+        domainPartLength, = struct.unpack_from("!B", UDPcontent, currentByte)
+        currentByte += 1
+
+        # the URL list we will fill with the requested domain parts (TLD is always last item)
+        URL = []
+
+        #0x00 is the delimiter byte, we check for that
+        while domainPartLength != 0:
+            domainPartString = ''
+            for count in range(domainPartLength):
+                # the bytes are characters so we can use 'c' from struct
+                char, = struct.unpack_from("!c", UDPcontent, currentByte)
+                currentByte += 1
+                # append the character to the string
+                domainPartString += char.decode("utf-8")
+            
+            # append the string to the list
+            URL.append(domainPartString)
+
+            domainPartLength, = struct.unpack_from("!B", UDPcontent, currentByte)
+            currentByte += 1
+
+        # if we worked with a pointer, we need to continue from where we left of, else we can just continue
+        if isPointer:
+            # we are done with the pointed address, restore the original byte position
+            currentByte = originalCurrentByte
+
+        # to get the qtype and qclass
+        atype, = struct.unpack_from("!H", UDPcontent, currentByte)
+        currentByte += 2
+        aclass, = struct.unpack_from("!H", UDPcontent, currentByte)
+        currentByte += 2
+        # TTL is an unsigned 32 bit (4 byte) integer so we can use struct(I)
+        attl, = struct.unpack_from("!I", UDPcontent, currentByte)
+        currentByte += 4
+        ardlength, = struct.unpack_from("!H", UDPcontent, currentByte)
+        currentByte += 2 
+
+
+        # this list will be filled with data from the RDATA content (= usually the IP)
+        ardata = []
+
+        for count in range(ardlength):
+            # each byte is an unsigned integer as specified in the RFC. We can use 'B' from struct
+            rdataPiece, = struct.unpack_from("!B", UDPcontent, currentByte)
+            currentByte += 1
+
+            # we add the data piece to rdata
+            ardata.append(rdataPiece)
+
+
+        # we build the answer object for later access
+        answerObject = {
+            'URL': URL,
+            'type': atype,
+            'class': aclass,
+            'ttl': attl,
+            'rdlength': ardlength,
+            'rdata': ardata
+        }
+
+        # we add the answer object to the list of answer objects
+        answers.append(answerObject)
+
+    return {
+        "id": id,
+        "flags": flags,
+        "qdcount": qdcount,
+        "ancount": ancount,
+        "nscount": nscount,
+        "arcount": arcount,
+        "requests": requests,
+        "answers": answers
+    }
+
+
+
+def encodeRequest(requestObject):
+    # we keep track of the currentByte, again
+    currentByte = 0
+    # exportBytes += bytes()
+
+    # pointers we can reference later
+    pointers = {}
+
+    # the byte string we will send one day, we start with the header content
+    exportBytes = struct.pack("!H", requestObject['id'])
+    currentByte += 2
+
+    # we have to populate the bits, this is the exact opposite of the decoding process so explanation for hex values is left out here
+    flagsRaw = 0
+    if requestObject['flags']['QR']:
+        flagsRaw = (flagsRaw | 0x8000)
+    if requestObject['flags']['Opcode']:
+        shiftedOpcode = (requestObject['flags']['Opcode'] << 11)
+        flagsRaw = (flagsRaw | shiftedOpcode)
+    if requestObject['flags']['AA']:
+        flagsRaw = (flagsRaw | 0x400)
+    if requestObject['flags']['TC']:
+        flagsRaw = (flagsRaw | 0x200) 
+    if requestObject['flags']['RD']:
+        flagsRaw = (flagsRaw | 0x100)  
+    if requestObject['flags']['RA']:
+        flagsRaw = (flagsRaw | 0x80)  
+    if requestObject['flags']['Z']:
+        shiftedZ = (requestObject['flags']['Z'] << 4)
+        flagsRaw = (flagsRaw | shiftedZ)  
+    if requestObject['flags']['RCODE']:
+        flagsRaw = (flagsRaw | 0xF) 
+    # append the bits converted to a hex byte string to the bytes we want to export
+    exportBytes += struct.pack("!H", flagsRaw)
+    currentByte += 2
+
+    # append all other header infromation to the hex byte string
+    exportBytes += struct.pack("!4H", requestObject['qdcount'], requestObject['ancount'], requestObject['nscount'], requestObject['arcount'])
+    currentByte += 8
+
+    # we populate the bytes to export with the requests
+    for request in requestObject['requests']:
+        # access the pointers by the rawURL as key
+        rawURL = ''
+        urlPointer = currentByte
+
+        for domainPart in request['URL']:
+            # we append to the rawURL
+            rawURL += domainPart
+            # domainPart is a string, like 'google' in google.com
+            exportBytes += struct.pack("!B", len(domainPart))
+            currentByte += 1
+            for domainPartCharacter in domainPart:
+                # domainPartCharacter is a char, like 'g' in google
+                exportBytes += struct.pack("!c", domainPartCharacter.encode("utf-8"))
+                currentByte += 1
+                
+        # according to the RFC, we terminate the name with a 0-byte
+        exportBytes += struct.pack("!B", 0)
+        currentByte += 1
+
+        pointers[rawURL] = urlPointer
+        
+        # append the other request information to the hex byte string
+        exportBytes += struct.pack("!2H", request['qtype'], request['qclass'])
+        currentByte += 4
+
+    # we populate the bytes to export with the answers
+    for answer in requestObject['answers']:
+        rawURL = ''
+        for domainPart in answer['URL']:
+            rawURL += domainPart
+
+        if rawURL in pointers:
+            URLpointer = pointers[rawURL]
+            # per RFC defintion, pointers start with two 1-bits at the MSB position
+            exportBytes += struct.pack("!H", URLpointer | 0xc000)
+            currentByte += 2
+        else:
+            for domainPart in answer['URL']:
+                pointers[rawURL] = currentByte
+                # domainPart is a string, like 'google' in google.com
+                exportBytes += struct.pack("!B", len(domainPart))
+                currentByte += 1
+                for domainPartCharacter in domainPart:
+                    # domainPartCharacter is a char, like 'g' in google
+                    exportBytes += struct.pack("!c", domainPartCharacter.encode("utf-8"))
+                    currentByte += 1
+
+            # according to the RFC, we terminate the name (not the pointer!) with a 0-byte
+            exportBytes += struct.pack("!B", 0)
+            currentByte += 1
+        
+        # append the other request information to the hex byte string
+        exportBytes += struct.pack("!2H", answer['type'], answer['class'])
+        currentByte += 4
+        exportBytes += struct.pack("!I", answer['ttl'])
+        currentByte += 4
+        exportBytes += struct.pack("!H", answer['rdlength'])
+        currentByte += 2
+
+        # append the rdata
+        for dataItem in answer['rdata']:
+            exportBytes += struct.pack("!B", dataItem)
+            currentByte += 1
+
+    return exportBytes
+
+# dummy object to test the request decoding
+responseDummy = b"\x78\xca\x81\x80\x00\x01\x00\x01\x00\x00\x00\x01\x03\x77\x77\x77\x06\x67\x6f\x6f\x67\x6c\x65\x03\x63\x6f\x6d\x00\x00\x01\x00\x01\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x4d\x00\x04\xac\xd9\x11\x44\x00\x00\x29\x04\xd0\x00\x00\x00\x00\x00\x00"
+
+# dummy object to test the request encoding
+requestDummy = {
+    "id": 2,
+    "flags": {
+        "QR": False,
+        "Opcode": 0,
+        "AA": False,
+        "TC": False,
+        "RD": False,
+        "RA": False,
+        "Z": 0,
+        "RCODE": False
+    },
+    'qdcount': 1, 
+    'ancount': 1, 
+    'nscount': 0, 
+    'arcount': 1, 
+    'requests': [
+        {
+            'URL': ['www', 'google', 'com'], 
+            'qtype': 1, 
+            'qclass': 1
+        }
+    ], 
+    'answers': [
+        {
+            'URL': ['www', 'google', 'com'], 
+            'type': 1, 
+            'class': 1, 
+            'ttl': 77, 
+            'rdlength': 4, 
+            'rdata': [172, 217, 17, 68]
+        }
+    ]
 }
 
-# offset that keeps track of the current byte that we access, DNSheader is 6 * H which is 6 * 16 bits which is 12 * 8 bits so DNSheader.size = 12 (bytes)
-currentByte = DNSheader.size
-# a list that is filled with the query objects that are decoded (if any)
-requests = []
-# a list that is filled in with the query answers that are decoded (if any)
-answers = []
-
-# for each request in the DNS query (qdcount in header)
-for query in range(qdcount):
-    # according to the RFC, to get qname, we get a length byte followed by the length amount of character bytes
-    domainPartLength, = struct.unpack_from("!B", UDPcontent, currentByte)
-    currentByte += 1
-    # the URL list we will fill with the requested domain parts (TLD is always last item)
-    URL = []
-
-    #0x00 is the delimiter byte, we check for that
-    while domainPartLength != 0:
-        domainPartString = ''
-        for count in range(domainPartLength):
-            # the bytes are characters so we can use 'c' from struct
-            char, = struct.unpack_from("!c", UDPcontent, currentByte)
-            currentByte += 1
-            # append the character to the string
-            domainPartString += char.decode("utf-8")
-        
-        # append the string to the list
-        URL.append(domainPartString)
-
-        domainPartLength, = struct.unpack_from("!B", UDPcontent, currentByte)
-        currentByte += 1
-
-    # to get the qtype and qclass
-    DNSrequest = struct.Struct("!2H")
-    qtype, qclass = DNSrequest.unpack_from(UDPcontent, currentByte)
-    # again, 2H is 4 bytes so DNSrequest.size = 4
-    currentByte += DNSrequest.size
-
-    # we build the request object for later access
-    requestObject = {
-        'URL': URL,
-        'qtype': qtype,
-        'qclass': qclass
-    }
-
-    # we add the request object to the list of request objects
-    requests.append(requestObject)
-
-print(f'ancount = {ancount}')
-
-# for each answer in the DNS query (ancount in header)
-for answer in range(ancount):
-    # NAME is a pointer as described by the RFC
-    domainPointer, = struct.unpack_from("!H", UDPcontent, currentByte)
-    currentByte += 2
-    # according to the RFC, pointer bytes start with 2 1-bits (to distinguish them from labels, see RFC) so we need to remove those
-    domainPointer = domainPointer & 0x3f # 00111111 dec = 3f hex 
-
-    # we will access the pointer from now on so we need to store the currentByte position to continue the program later
-    originalCurrentByte = currentByte
-    # subtract the byte offset from the current byte (subtraction is possible since pointers are only used for earlier occurrences, see RFC)
-    currentByte = domainPointer
-
-    # repetition of code, oops
-    # according to the RFC, to get qname, we get a length byte followed by the length amount of character bytes
-    domainPartLength, = struct.unpack_from("!B", UDPcontent, currentByte)
-    currentByte += 1
-    # the URL list we will fill with the requested domain parts (TLD is always last item)
-    URL = []
-
-    #0x00 is the delimiter byte, we check for that
-    while domainPartLength != 0:
-        domainPartString = ''
-        for count in range(domainPartLength):
-            # the bytes are characters so we can use 'c' from struct
-            char, = struct.unpack_from("!c", UDPcontent, currentByte)
-            currentByte += 1
-            # append the character to the string
-            domainPartString += char.decode("utf-8")
-        
-        # append the string to the list
-        URL.append(domainPartString)
-
-        domainPartLength, = struct.unpack_from("!B", UDPcontent, currentByte)
-        currentByte += 1
-
-    # we are done with the pointed address, restore the original byte position
-    currentByte = originalCurrentByte
-
-    # to get the qtype and qclass
-    atype, = struct.unpack_from("!H", UDPcontent, currentByte)
-    currentByte += 2
-    aclass, = struct.unpack_from("!H", UDPcontent, currentByte)
-    currentByte += 2
-    # TTL is an unsigned 32 bit (4 byte) integer so we can use struct(I)
-    attl, = struct.unpack_from("!I", UDPcontent, currentByte)
-    currentByte += 4
-    ardlength, = struct.unpack_from("!H", UDPcontent, currentByte)
-    currentByte += 2
+print(decodeRequest(encodeRequest(requestDummy)))
 
 
-    # this list will be filled with data from the RDATA content (= usually the IP)
-    ardata = []
 
-    for count in range(ardlength):
-        # each byte is an unsigned integer as specified in the RFC. We can use 'B' from struct
-        rdataPiece, = struct.unpack_from("!B", UDPcontent, currentByte)
-        currentByte += 1
-
-        # we add the data piece to rdata
-        ardata.append(rdataPiece)
-
-
-    # we build the answer object for later access
-    answerObject = {
-        'URL': URL,
-        'type': atype,
-        'class': aclass,
-        'ttl': attl,
-        'rdlength': ardlength,
-        'rdata': ardata
-    }
-
-    # we add the answer object to the list of answer objects
-    answers.append(answerObject)
-
-print(requests)
-print(answers)
-
-# for count in range(length):
-#     character, = struct.unpack_from("!c", UDPcontent, 1 + count)
-#     print(character)
-
-# see explanation in the query section of RFC notes below
-DNSrequest = struct.Struct("!4b")
-
-# bs, bs2, char1, char2 = DNSrequest.unpack_from(UDPcontent, DNSheader.size)
-
-# print(bs, bs2)
-# print(char1, char2)
-
-print(flags["TC"])
-print(qdcount)
 
 # refer to: https://www.cs.swarthmore.edu/~chaganti/cs43/f19/labs/lab3.html for a general workflow that is needed to implement the DNS server
 # refer to: https://www2.cs.duke.edu/courses/fall16/compsci356/DNS/DNS-primer.pdf for explained example queries
@@ -254,3 +410,5 @@ print(qdcount)
 # +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
 
 # - an octet = 8 bits (a byte)
+
+# - if the AA flag is set, (True) the DNS response does not contain the IP of the requested domain but rather the domain of the nameserver that we must query
