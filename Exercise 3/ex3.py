@@ -37,7 +37,7 @@ def findResponseType(data):
         raise("Unhandled response type for this protocol.")
 
 
-def responseHandler(data, respTyp):
+def responseHandler(data, respTyp, name):
     class terminalColors:
         blue = '\033[94m'
         green = '\033[92m'
@@ -45,11 +45,18 @@ def responseHandler(data, respTyp):
         red = '\033[91m'
         end = '\033[0m'
         bold = '\033[1m'
-
+    
     if respTyp == "Hello":
-        print(terminalColors.green + "[OK] " +
-              terminalColors.end + terminalColors.bold + "You are now logged in." + terminalColors.end)
-        return True
+        # check that the server sends us the correct name, indicating that our connection request went through without issue.
+        data = data.replace("HELLO", "")
+        data = data.split()
+        print(data[0])
+        if data[0] == name:
+            print(terminalColors.green + "[OK] " +
+                terminalColors.end + terminalColors.bold + "You are now logged in." + terminalColors.end)
+            return True
+        else:
+            return False
     elif respTyp == "Busy":
         print(terminalColors.red +
               "[ERROR] " + terminalColors.end + terminalColors.bold + "Server is busy at the moment." + terminalColors.end)
@@ -69,6 +76,8 @@ def responseHandler(data, respTyp):
         nameList = ""
         for name in names:
             nameList += name + " "
+        # !who non-functionality disclaimer due to server implementation (verified by TA)
+        print(terminalColors.red + "[DISCLAIMER] " + terminalColors.end + "!who command is non-functional at this time. Please contact a server administrator for details. \n")    
         print(terminalColors.green + "[OK]" +
               terminalColors.end + terminalColors.bold + " These users are logged in:" + terminalColors.end + nameList)
     elif respTyp == "Unknown":
@@ -88,13 +97,12 @@ def responseHandler(data, respTyp):
               terminalColors.end + terminalColors.bold + "@" + sender + ":" + terminalColors.end + messageBody)
     elif respTyp == "CurrSetting":
         data = data.replace("VALUE", "").split()
-
-        setting = data[0]
-        value = data[1]
+        setting = "Setting"
+        value = data[0]
         if len(data) > 2:
-            upper = data
-            print(terminalColors.green + "[" + setting + "]" + terminalColors.end + value + upper)
-        print(terminalColors.green + "[" + setting + "]" + terminalColors.end + value)
+            upper = data[2]
+            print(terminalColors.green + "[" + setting + "] " + terminalColors.end + " " + value + upper)
+        print(terminalColors.green + "[" + setting + "] " + terminalColors.end + value)
     elif respTyp == "Set":
         print(terminalColors.green + "[SET-OK]" + terminalColors.end)
 
@@ -111,6 +119,7 @@ def chatInputLoop(sock, userActive):
             sock.close()
             quit()
         elif inputData == "!who":
+            # who doesn't work properly because of the server side implementation, so we add a disclamer rather than fixing it.
             sendString = "WHO\n".encode("utf-8")
             # we don't catch the responses in this loop
             sock.sendto(sendString, host)
@@ -131,12 +140,13 @@ def chatInputLoop(sock, userActive):
         elif inputData.find("SET") == 0:
             inputData = inputData.split()
             if len(inputData) == 3:
-                sendString = "SET" + inputData[1] + inputData[2]
+                sendString = "SET " + inputData[1] + " " + inputData[2] + "\n"
             elif len(inputData) == 4:
-                sendString = "SET" + inputData[1] + inputData[2] + inputData[3] + "\n"
+                sendString = "SET " + inputData[1] + " " + inputData[2] + inputData[3] + "\n"
             sendString = sendString.encode("utf-8")
             sock.sendto(sendString, host)
         elif inputData.find("GET") == 0:
+            sendString = inputData
             sendString = sendString + "\n"
             sendString = sendString.encode("utf-8")
             sock.sendto(sendString, host)
@@ -151,24 +161,26 @@ def chatReceiverLoop(sock, userActive):
     while userActive[0] == True:
         recievedData = ""
         sock.settimeout(1)
-
+        
         # receivedData = sock.recv(4096).decode("utf-8")
         # not very efficient, scans the whole string over and over again
-        while "\n" not in recievedData and userActive[0] == True:
-            try:
-                data, addr = sock.recvfrom(10)
-                recievedData += data.decode("utf-8")
-                recievedAddr = addr
+        # while "\n" not in recievedData and userActive[0] == True:
+        try:
+            data, addr = sock.recvfrom(65565)
+            recievedData += data.decode("utf-8")
+            recievedAddr = addr
 
-            except socket.timeout:
-                continue
+        except socket.timeout:
+            continue
 
         if userActive[0] == True:
             # we do not need the delimiter anymore
             recievedData = cleanString(recievedData)
             # print("receivedData: " + receivedData)
             resType = findResponseType(recievedData)
-            responseHandler(recievedData, resType)
+            # null passed as name variable, as we don't need to check name correctness every time. This could be avoided as it is pretty ugly
+            # by separating the name check function from responseHandler, but that would add more complexity to our code and python doesn't care anyways.
+            responseHandler(recievedData, resType, None)
 
 
 # mind your scope please (so threads can access the sock object)
@@ -213,7 +225,7 @@ while nameOk == False:
 
     # handshake recieved, check status
     respTyp = findResponseType(recievedData)
-    nameOk = responseHandler(recievedData, respTyp)
+    nameOk = responseHandler(recievedData, respTyp , name)
 
 # ugly fix to pass by reference (so we avoid global variables)
 userActive = []
