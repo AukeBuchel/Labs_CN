@@ -3,6 +3,7 @@ import time
 import threading
 import struct
 
+# makeup colours
 class terminalColors:
         blue = '\033[94m'
         green = '\033[92m'
@@ -15,7 +16,6 @@ def cleanString(string):
     string = string.strip()
     string = string.replace("\n", '')
     return string
-
 
 def findResponseType(data):
     if data.find("HELLO") == 0:
@@ -43,16 +43,23 @@ def findResponseType(data):
     else:
         raise("Unhandled response type for this protocol.")
 
-
-def responseHandler(data, respTyp, name):
-    # class terminalColors:
-    #     blue = '\033[94m'
-    #     green = '\033[92m'
-    #     yellow = '\033[93m'
-    #     red = '\033[91m'
-    #     end = '\033[0m'
-    #     bold = '\033[1m'
+# use struct instead, this is ugly. Map hex to binary codewords.
+# def checkSum(string):
+#     # we have to generate a bitstring from the passed string. We use this weird looking combination of functions to
+#     # generate the bitstring.
+#     bitString = ''.join(format(i, '08b') for i in bytearray(string, encoding ='utf-8'))
+#     # because we want to ensure all characters are correct, we compute the checksum on subsets of 8 bits out of the entire
+#     # bitstring.
+#     # Slice bitstring into bytes
+#     codewords = []
+#     while bitString != "":
+#         codeWord = bitString[0:7]
+#         codeWords.append(codeWord)
+#         bitString[0:7] = ""
     
+    # add all codewords together. Specify some rules of addition
+
+def responseHandler(data, respTyp, name):    
     if respTyp == "Hello":
         # check that the server sends us the correct name, indicating that our connection request went through without issue.
         data = data.replace("HELLO", "")
@@ -166,10 +173,10 @@ def chatInputLoop(sock, userActive):
                 # implementation for checksum, parity or hamming code should be done in this loop.
                 sock.sendto(sendString, host)
                 print(terminalColors.yellow + "[STATUS] " + terminalColors.end + terminalColors.bold+  "Waiting for acknowledgement...\n" + terminalColors.end)
-                time.sleep(1)
+                time.sleep(2)
                 if userActive[1] == True:
                     break
-            print("Free from send loop")
+
         elif inputData.find("SET") == 0:
             inputData = inputData.split()
             if len(inputData) == 3:
@@ -202,6 +209,10 @@ def chatReceiverLoop(sock, userActive):
             data, addr = sock.recvfrom(65565)
             recievedData += data.decode("utf-8")
             recievedAddr = addr
+
+            # Checksum should be checked here, to make sure the message recieved is correct before we continue reading.
+            # if checksum == error: discard and continue waiting
+            # if checksum == no error: continue normally.
 
         except socket.timeout:
             continue
