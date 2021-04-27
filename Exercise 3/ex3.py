@@ -135,7 +135,7 @@ def responseHandler(data, respTyp, name):
         raise("Message could not be handled")
 
 
-def chatInputLoop(sock, userActive):
+def chatInputLoop(sock, userActive, sequenceNr):
     while userActive[0] == True:
         # just ask for input
         inputData = input("")
@@ -161,7 +161,7 @@ def chatInputLoop(sock, userActive):
                 sendString += " " + word
 
             sendString += "\n"
-            sendString = sendString.encode("utf-8")
+            # sendString = sendString.encode("utf-8")
             # we do have to reset the acknowledgement bool every time we send or we will never enter our loop again :)
             userActive[1] = False
             # sock.sendto(sendString.encode("utf-8"), host)
@@ -171,11 +171,18 @@ def chatInputLoop(sock, userActive):
             # We start a timer here when sending to keep track of our send time.
             while userActive[1] == False:
                 # implementation for checksum, parity or hamming code should be done in this loop.
+                sendString = sendString + sequenceNr
+                sendString = sendString.encode("utf-8")
                 sock.sendto(sendString, host)
                 print(terminalColors.yellow + "[STATUS] " + terminalColors.end + terminalColors.bold+  "Waiting for acknowledgement...\n" + terminalColors.end)
                 time.sleep(2)
                 if userActive[1] == True:
                     break
+            # increment sequence number (global var)
+            sequenceNr[0] += 1
+            # make sequenceNr wrap around when it exceeds 8 bits. We likely won't need a sequence nr larger than this
+            if sequenceNr[0] == 31:
+                sequenceNr[0] = 0
 
         elif inputData.find("SET") == 0:
             inputData = inputData.split()
@@ -273,11 +280,15 @@ while nameOk == False:
 
 # ugly fix to pass by reference (so we avoid global variables)
 userActive = []
+# Connection alive bool
 userActive.append(True)
+# Message acknowledgement recieved bool
 userActive.append(False)
+sequenceNr = []
+sequenceNr.append(0)
 
 # use threading to get into our main chat client functions
-sendThread = threading.Thread(target=chatInputLoop, args=(sock, userActive))
+sendThread = threading.Thread(target=chatInputLoop, args=(sock, userActive, sequenceNr))
 sendThread.daemon = True
 receiveThread = threading.Thread(
     target=chatReceiverLoop, args=(sock, userActive))
