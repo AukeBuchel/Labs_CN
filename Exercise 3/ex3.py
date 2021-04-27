@@ -112,6 +112,12 @@ def responseHandler(data, respTyp, name):
               terminalColors.end + terminalColors.bold + "Your message was sent successfully." + terminalColors.end)
         
     elif respTyp == "NewMsg":
+        # delete SEQ <seqnr> from message body
+        seqindex = data.find("SEQ")
+        seqNr = data[(seqindex + 4):(seqindex + 5)]
+        data = data.replace(seqNr, "")
+        data = data.replace(" SEQ ", "")
+
         data = data.replace("DELIVERY", "").split()
         sender = data[0]
         data.pop(0)
@@ -206,7 +212,7 @@ def chatInputLoop(sock, userActive, sequenceNr):
 
 
 def chatReceiverLoop(sock, userActive):
-    recievedNrs = []
+    recievedNrs = [-1]
 
     while userActive[0] == True:
         recievedData = ""
@@ -220,31 +226,55 @@ def chatReceiverLoop(sock, userActive):
             recievedData += data.decode("utf-8")
             recievedAddr = addr
 
-            # Here we check the data for the sequence number. First we look for the sequence "~SEQ~" which we append before
-            # the sequence number every time we send. If the sequence number is the same as one we already had, or lower, or more
-            # than the current max + 1, we discard the message.
-            # This doesnt work when sending to yourself, because the server doesnt give us a sequence number. Only works
-            # if you have 2 separate terminals sending to eachother.
-            msgSeqNrLoc = recievedData.find("SEQ")
-            # get int version of index.
-            if msgSeqNrLoc == -1:
-                # seq area got corrupted, the message is therefore useless. Discard.
-            seqNr = int(recievedData[(msgSeqNrLoc + 4):(msgSeqNrLoc + 5)])
+            # The following code checks the checksum and sequence number. If we were able to recieve this from the server 
+            # in the format that we wanted, we could do this cleaner. As it stands, we can only implement such checks in 
+            # the user to user messages themselves. Therefore, the checks below will only apply to the messages coming from other 
+            # users. This is why we first check what type of message we have. You should note that if the server were to implement 
+            # our message format, this check would not be necessary. In that case we would be able to do the checks here, which is 
+            # why we didn't move this code to the function that deals with user-user messaging, but put it in this central part instead.
 
-            # check checksum here, so that we know that only correct messages pass on to the next check for sequence number.
-            # if the message contained errors before, we dont mind recieving it again in hopes of it being correct this time.
-            # 
+            # this if statement makes sure we only apply our checks to user-user messages.
+            tempResCheck = findResponseType(recievedData)
+            if tempResCheck == "NewMsg":
 
-            if seqNr in recievedNrs:
-                # we recieved this message already.
+                # Here we check the data for the sequence number. First we look for the sequence "~SEQ~" which we append before
+                # the sequence number every time we send. If the sequence number is the same as one we already had, or lower, or more
+                # than the current max + 1, we discard the message.
+                # This doesnt work when sending to yourself, because the server doesnt give us a sequence number. Only works
+                # if you have 2 separate terminals sending to eachother.
+                msgSeqNrLoc = recievedData.find("SEQ")
+                # get int version of index.
+                if msgSeqNrLoc == -1:
+                    # seq area got corrupted, the message is therefore useless. Discard.
+                    continue
+                seqNr = int(recievedData[(msgSeqNrLoc + 4):(msgSeqNrLoc + 5)])
 
-            # only if sequence number is correct do we want to use this message.
-            recievedNrs.append(seqNr)
+                # check checksum here, so that we know that only correct messages pass on to the next check for sequence number.
+                # if the message contained errors before, we dont mind recieving it again in hopes of it being correct this time.
+                # Only if the message contains no bitflips (that we know of) do we proceed to the next check: sequence numbers, where
+                # we try to deal with transfer delay.
 
-            # instead of our client taking the server sent send-ok message as confirmation, we should make it so that we send
-            # our own acknowledgement here. A corrupted message would still be sent correctly according to the server, but we can still
-            # find out in this try part that the message got corrupted along the way. Thus, an automatic response should be sent here.
-            # something like @<source> ACKNOWLEDGED should do.
+                if seqNr in recievedNrs:
+                    # we recieved this message already.
+                    continue
+                elif seqNr < max(recievedNrs):
+                    # this message is older than the newest one we recieved correctly and we assume was stuck in transmission
+                    # for a long time. We discard old messages to ensure we maintain message order.
+                    continue
+                elif seqNr != (max(recievedNrs) + 1):
+                    # this message is not the next one we were expecting. We could make the decision to buffer this message and 
+                    # wait for the ones that should come before it, !!!!!ASK TA IF THIS IS NECESSARY!!!!!
+                    # for now just discard it.
+                    continue
+
+
+                # only if sequence number is correct do we want to use this message.
+                recievedNrs.append(seqNr)
+
+                # instead of our client taking the server sent send-ok message as confirmation, we should make it so that we send
+                # our own acknowledgement here. A corrupted message would still be sent correctly according to the server, but we can still
+                # find out in this try part that the message got corrupted along the way. Thus, an automatic response should be sent here.
+                # something like @<source> ACKNOWLEDGED should do.
 
         except socket.timeout:
             continue
