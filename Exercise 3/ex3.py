@@ -160,7 +160,10 @@ def chatInputLoop(sock, userActive, sequenceNr):
             for word in inputData:
                 sendString += " " + word
 
+            sendString = sendString + " SEQ "+ str(sequenceNr[0]) + " "
             sendString += "\n"
+            sendString = sendString.encode("utf-8")
+            
             # sendString = sendString.encode("utf-8")
             # we do have to reset the acknowledgement bool every time we send or we will never enter our loop again :)
             userActive[1] = False
@@ -170,9 +173,7 @@ def chatInputLoop(sock, userActive, sequenceNr):
             # to true when it recieves a message containing SET-OK, prompting a loop in this function to stop sending the packet over and over again.
             # We start a timer here when sending to keep track of our send time.
             while userActive[1] == False:
-                # implementation for checksum, parity or hamming code should be done in this loop.
-                sendString = sendString + sequenceNr
-                sendString = sendString.encode("utf-8")
+                # append sequencenr to message
                 sock.sendto(sendString, host)
                 print(terminalColors.yellow + "[STATUS] " + terminalColors.end + terminalColors.bold+  "Waiting for acknowledgement...\n" + terminalColors.end)
                 time.sleep(2)
@@ -205,6 +206,8 @@ def chatInputLoop(sock, userActive, sequenceNr):
 
 
 def chatReceiverLoop(sock, userActive):
+    recievedNrs = []
+
     while userActive[0] == True:
         recievedData = ""
         sock.settimeout(1)
@@ -217,9 +220,31 @@ def chatReceiverLoop(sock, userActive):
             recievedData += data.decode("utf-8")
             recievedAddr = addr
 
-            # Checksum should be checked here, to make sure the message recieved is correct before we continue reading.
-            # if checksum == error: discard and continue waiting
-            # if checksum == no error: continue normally.
+            # Here we check the data for the sequence number. First we look for the sequence "~SEQ~" which we append before
+            # the sequence number every time we send. If the sequence number is the same as one we already had, or lower, or more
+            # than the current max + 1, we discard the message.
+            # This doesnt work when sending to yourself, because the server doesnt give us a sequence number. Only works
+            # if you have 2 separate terminals sending to eachother.
+            msgSeqNrLoc = recievedData.find("SEQ")
+            # get int version of index.
+            if msgSeqNrLoc == -1:
+                # seq area got corrupted, the message is therefore useless. Discard.
+            seqNr = int(recievedData[(msgSeqNrLoc + 4):(msgSeqNrLoc + 5)])
+
+            # check checksum here, so that we know that only correct messages pass on to the next check for sequence number.
+            # if the message contained errors before, we dont mind recieving it again in hopes of it being correct this time.
+            # 
+
+            if seqNr in recievedNrs:
+                # we recieved this message already.
+
+            # only if sequence number is correct do we want to use this message.
+            recievedNrs.append(seqNr)
+
+            # instead of our client taking the server sent send-ok message as confirmation, we should make it so that we send
+            # our own acknowledgement here. A corrupted message would still be sent correctly according to the server, but we can still
+            # find out in this try part that the message got corrupted along the way. Thus, an automatic response should be sent here.
+            # something like @<source> ACKNOWLEDGED should do.
 
         except socket.timeout:
             continue
