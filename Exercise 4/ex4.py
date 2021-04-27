@@ -18,6 +18,152 @@ import ctypes # to create a buffer
 # #sock.sendto("yoooo".encode("utf-8"), addr)
 # =====================================================
 
+# use this function ONLY if certain that this is a label, it does NOT detect pointers
+def decodeLabel(UDPcontent, offsetByte):
+    domainPartLength, = struct.unpack_from("!B", UDPcontent, offsetByte)
+    offsetByte += 1
+
+    domainPartString = ''
+    for count in range(domainPartLength):
+        # the bytes are characters so we can use 'c' from struct
+        char, = struct.unpack_from("!c", UDPcontent, offsetByte)
+        offsetByte += 1
+        
+        # append the character to the string
+        domainPartString += char.decode("utf-8")
+
+    return domainPartString, offsetByte
+
+
+def decodeResourceRecord(UDPcontent, offsetByte):
+     # NAME is a pointer as described by the RFC
+    domainPointer, = struct.unpack_from("!H", UDPcontent, offsetByte)
+    offsetByte += 2
+
+    # check if it is really a pointer (starts with two 1-bits) or just a regular domain description. Both are allowed by the RFC
+    isPointer = (domainPointer & 0xc000) != 0
+
+    # if it is indeed a pointer, we set the current byte to the byte pointed to by this pointer, else we need to discard the pointer bytes
+    if isPointer:
+        # according to the RFC, pointer bytes start with 2 1-bits (to distinguish them from labels, see RFC) so we need to remove those
+        domainPointer = domainPointer & 0x3ff # 0011111111111111 bin = 3ff hex 
+        # we will access the pointer from now on so we need to store the currentByte position to continue the program later
+        originalOffsetByte = offsetByte
+        # subtract the byte offset from the current byte (subtraction is possible since pointers are only used for earlier occurrences, see RFC)
+        offsetByte = domainPointer
+    else:
+        # we need to 'reread' the bytes because they are not used for a pointer but for labels
+        offsetByte -= 2
+
+
+    # according to the RFC, to get qname, we get a length byte followed by the length amount of character bytes
+    domainPartLength, = struct.unpack_from("!B", UDPcontent, offsetByte)
+    offsetByte += 1
+
+    # the URL list we will fill with the requested domain parts (TLD is always last item)
+    URL = []
+
+    #0x00 is the delimiter byte, we check for that
+    while domainPartLength != 0:
+        domainPartString = ''
+        for count in range(domainPartLength):
+            # the bytes are characters so we can use 'c' from struct
+            char, = struct.unpack_from("!c", UDPcontent, offsetByte)
+            offsetByte += 1
+            # append the character to the string
+            domainPartString += char.decode("utf-8")
+        
+        # append the string to the list
+        URL.append(domainPartString)
+
+        domainPartLength, = struct.unpack_from("!B", UDPcontent, offsetByte)
+        offsetByte += 1
+
+    # if we worked with a pointer, we need to continue from where we left of, else we can just continue
+    if isPointer:
+        # we are done with the pointed address, restore the original byte position
+        offsetByte = originalOffsetByte
+
+    # to get the qtype and qclass
+    atype, = struct.unpack_from("!H", UDPcontent, offsetByte)
+    offsetByte += 2
+    aclass, = struct.unpack_from("!H", UDPcontent, offsetByte)
+    offsetByte += 2
+    # TTL is an unsigned 32 bit (4 byte) integer so we can use struct(I)
+    attl, = struct.unpack_from("!I", UDPcontent, offsetByte)
+    offsetByte += 4
+    ardlength, = struct.unpack_from("!H", UDPcontent, offsetByte)
+    offsetByte += 2 
+
+
+    # this list will be filled with data from the RDATA content (= usually the IP)
+    ardata = []
+
+    # todo: implement multiple types (currently only A but also NS should be supported)
+    # type A
+    if atype == 1:
+        for count in range(ardlength):
+            # each byte is an unsigned integer as specified in the RFC. We can use 'B' from struct
+            rdataPiece, = struct.unpack_from("!B", UDPcontent, offsetByte)
+            offsetByte += 1
+
+            # we add the data piece to rdata
+            ardata.append(rdataPiece)
+
+    # type NS
+    elif atype == 2:
+        currentDomainLength = 0
+        domainPartString = ''
+
+        print(f'Data length = {ardlength}')
+
+        bytesInspected = 0
+        while bytesInspected < ardlength:
+            currentDomainLength, = struct.unpack_from("!B", UDPcontent, offsetByte)
+            offsetByte += 1
+            bytesInspected += 1
+
+            URLpart = ''
+
+            isPointer = (currentDomainLength & 0xc0) != 0
+            if isPointer:
+                # since a pointer is two octets, we 'reread' the bytes (like rewinding a tape) and then read the two-byte pointer in full
+                offsetByte -= 1
+                bytesInspected -= 1
+                labelPointer, = struct.unpack_from("!H", UDPcontent, offsetByte)
+                offsetByte += 2
+                bytesInspected += 2
+
+                # we remove the pointer indicators (from RFC, first two bits are 1 if pointer)
+                labelPointer = labelPointer & 0x3ff # 0011111111111111 bin = 3ff hex 
+                # blah to prevent "too many values to unpack"
+                URLpart, blah = decodeLabel(UDPcontent, labelPointer)
+            # we do not have a pointer
+            else:
+                # we need to 'reread' the first byte to keep the decodeLabel() function working properly, after all we love modularity
+                offsetByte -= 1
+                bytesInspected -= 1
+                oldOffsetByte = offsetByte
+                URLpart, offsetByte = decodeLabel(UDPcontent, offsetByte)
+                # after the label decoding, the offset byte has increased, we measure with how much bytes it has increased, this is the number of bytes we have already checked (needed for the while loop)
+                bytesInspected += (offsetByte - oldOffsetByte)
+
+            print(URLpart)
+            print(f"bytes inspected ={bytesInspected}")
+            ardata.append(URLpart)
+
+    # we build the final resource record object for later access
+    resourceRecordObject = {
+        'URL': URL,
+        'type': atype,
+        'class': aclass,
+        'ttl': attl,
+        'rdlength': ardlength,
+        'rdata': ardata
+    }
+
+    return resourceRecordObject, offsetByte
+
 
 def decodeRequest(UDPcontent):
     # see explanation in the header section of RFC notes below
@@ -87,89 +233,7 @@ def decodeRequest(UDPcontent):
 
     # for each answer in the DNS query (ancount in header)
     for answer in range(ancount):
-        # todo: check if name actually is a pointer (& 11.......)
-        # NAME is a pointer as described by the RFC
-        domainPointer, = struct.unpack_from("!H", UDPcontent, currentByte)
-        currentByte += 2
-
-        # check if it is really a pointer (starts with two 1-bits) or just a regular domain description. Both are allowed by the RFC
-        isPointer = (domainPointer & 0xc000) != 0
-
-        # if it is indeed a pointer, we set the current byte to the byte pointed to by this pointer, else we need to discard the pointer bytes
-        if isPointer:
-            # according to the RFC, pointer bytes start with 2 1-bits (to distinguish them from labels, see RFC) so we need to remove those
-            domainPointer = domainPointer & 0x3ff # 0011111111111111 bin = 3ff hex 
-            # we will access the pointer from now on so we need to store the currentByte position to continue the program later
-            originalCurrentByte = currentByte
-            # subtract the byte offset from the current byte (subtraction is possible since pointers are only used for earlier occurrences, see RFC)
-            currentByte = domainPointer
-        else:
-            # we need to 'reread' the bytes because they are not used for a pointer but for labels
-            currentByte -= 2
-
-        # repetition of code, oops
-        # according to the RFC, to get qname, we get a length byte followed by the length amount of character bytes
-        domainPartLength, = struct.unpack_from("!B", UDPcontent, currentByte)
-        currentByte += 1
-
-        # the URL list we will fill with the requested domain parts (TLD is always last item)
-        URL = []
-
-        #0x00 is the delimiter byte, we check for that
-        while domainPartLength != 0:
-            domainPartString = ''
-            for count in range(domainPartLength):
-                # the bytes are characters so we can use 'c' from struct
-                char, = struct.unpack_from("!c", UDPcontent, currentByte)
-                currentByte += 1
-                # append the character to the string
-                domainPartString += char.decode("utf-8")
-            
-            # append the string to the list
-            URL.append(domainPartString)
-
-            domainPartLength, = struct.unpack_from("!B", UDPcontent, currentByte)
-            currentByte += 1
-
-        # if we worked with a pointer, we need to continue from where we left of, else we can just continue
-        if isPointer:
-            # we are done with the pointed address, restore the original byte position
-            currentByte = originalCurrentByte
-
-        # to get the qtype and qclass
-        atype, = struct.unpack_from("!H", UDPcontent, currentByte)
-        currentByte += 2
-        aclass, = struct.unpack_from("!H", UDPcontent, currentByte)
-        currentByte += 2
-        # TTL is an unsigned 32 bit (4 byte) integer so we can use struct(I)
-        attl, = struct.unpack_from("!I", UDPcontent, currentByte)
-        currentByte += 4
-        ardlength, = struct.unpack_from("!H", UDPcontent, currentByte)
-        currentByte += 2 
-
-
-        # this list will be filled with data from the RDATA content (= usually the IP)
-        ardata = []
-
-        for count in range(ardlength):
-            # each byte is an unsigned integer as specified in the RFC. We can use 'B' from struct
-            rdataPiece, = struct.unpack_from("!B", UDPcontent, currentByte)
-            currentByte += 1
-
-            # we add the data piece to rdata
-            ardata.append(rdataPiece)
-
-
-        # we build the answer object for later access
-        answerObject = {
-            'URL': URL,
-            'type': atype,
-            'class': aclass,
-            'ttl': attl,
-            'rdlength': ardlength,
-            'rdata': ardata
-        }
-
+        answerObject, currentByte = decodeResourceRecord(UDPcontent, currentByte)
         # we add the answer object to the list of answer objects
         answers.append(answerObject)
 
@@ -178,98 +242,10 @@ def decodeRequest(UDPcontent):
 
     # for each authority in the DNS query (nscount in header)
     for authority in range(nscount):
-        # NAME is a pointer as described by the RFC
-        domainPointer, = struct.unpack_from("!H", UDPcontent, currentByte)
-        currentByte += 2
-
-        # check if it is really a pointer (starts with two 1-bits) or just a regular domain description. Both are allowed by the RFC
-        isPointer = (domainPointer & 0xc000) != 0
-
-        # if it is indeed a pointer, we set the current byte to the byte pointed to by this pointer, else we need to discard the pointer bytes
-        if isPointer:
-            # according to the RFC, pointer bytes start with 2 1-bits (to distinguish them from labels, see RFC) so we need to remove those
-            domainPointer = domainPointer & 0x3ff # 0011111111111111 bin = 3ff hex 
-            # we will access the pointer from now on so we need to store the currentByte position to continue the program later
-            originalCurrentByte = currentByte
-            # subtract the byte offset from the current byte (subtraction is possible since pointers are only used for earlier occurrences, see RFC)
-            currentByte = domainPointer
-        else:
-            # we need to 'reread' the bytes because they are not used for a pointer but for labels
-            currentByte -= 2
-
-        # repetition of code, oops
-        # according to the RFC, to get qname, we get a length byte followed by the length amount of character bytes
-        domainPartLength, = struct.unpack_from("!B", UDPcontent, currentByte)
-        currentByte += 1
-
-        # the URL list we will fill with the requested domain parts (TLD is always last item)
-        URL = []
-
-        #0x00 is the delimiter byte, we check for that
-        while domainPartLength != 0:
-            domainPartString = ''
-            for count in range(domainPartLength):
-                # the bytes are characters so we can use 'c' from struct
-                char, = struct.unpack_from("!c", UDPcontent, currentByte)
-                currentByte += 1
-                # append the character to the string
-                domainPartString += char.decode("utf-8")
-            
-            # append the string to the list
-            URL.append(domainPartString)
-
-            domainPartLength, = struct.unpack_from("!B", UDPcontent, currentByte)
-            currentByte += 1
-
-        # if we worked with a pointer, we need to continue from where we left of, else we can just continue
-        if isPointer:
-            # we are done with the pointed address, restore the original byte position
-            currentByte = originalCurrentByte
-
-        # to get the qtype and qclass
-        atype, = struct.unpack_from("!H", UDPcontent, currentByte)
-        currentByte += 2
-        aclass, = struct.unpack_from("!H", UDPcontent, currentByte)
-        currentByte += 2
-        # TTL is an unsigned 32 bit (4 byte) integer so we can use struct(I)
-        attl, = struct.unpack_from("!I", UDPcontent, currentByte)
-        currentByte += 4
-        ardlength, = struct.unpack_from("!H", UDPcontent, currentByte)
-        currentByte += 2 
-
-        # this list will be filled with data from the RDATA content (= usually the IP)
-        ardata = []
-
-        bytesInspected = 0
-
-        while bytesInspected < ardlength:
-            domainPartLength, = struct.unpack_from("!B", UDPcontent, currentByte)
-            currentByte += 1
-            bytesInspected += 1
-
-            domainPartString = ''
-            for count in range(domainPartLength):
-                # the bytes are characters so we can use 'c' from struct
-                char, = struct.unpack_from("!c", UDPcontent, currentByte)
-                currentByte += 1
-                bytesInspected += 1
-                # append the character to the string
-                domainPartString += char.decode("utf-8")
-            
-            # append the string to the list
-            ardata.append(domainPartString)
-
-        # we build the answer object for later access
-        authorityObject = {
-            'URL': URL,
-            'type': atype,
-            'class': aclass,
-            'ttl': attl,
-            'rdlength': ardlength,
-            'rdata': ardata
-        }
-
-        # we add the answer object to the list of answer objects
+        print(f"starting at {currentByte}")
+        authorityObject, currentByte = decodeResourceRecord(UDPcontent, currentByte)
+        print(f"after authority, cb = {currentByte}")
+        # we add the authority object to the list of answer objects
         authorities.append(authorityObject)
 
     return {
@@ -283,8 +259,6 @@ def decodeRequest(UDPcontent):
         "answers": answers,
         "authorities": authorities
     }
-
-
 
 def encodeRequest(requestObject):
     # we keep track of the currentByte, again
@@ -439,7 +413,7 @@ requestDummy = {
 
 print(decodeRequest(encodeRequest(requestDummy)))
 
-host = ("192.168.1.106", 53)
+host = ("192.168.1.198", 53)
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(host)
 # sock.sendto("test".encode("utf-8"), ('8.8.8.8', 53))
