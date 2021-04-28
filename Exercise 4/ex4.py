@@ -1,6 +1,6 @@
 import socket
 import struct  # byte ordering
-import ctypes # to create a buffer
+import random
 
 # ============= USED IN PROD =========================
 # # setup the local server (UDP/53)
@@ -62,12 +62,19 @@ def pointerFound(byteContent, byteSize = 2):
 def decodePointer(byteContent):
     return (byteContent & 0x3ff) # 0011111111111111 bin = 3ff hex 
 
-def getDomainString(DomainList):
+def getDomainString(domainList):
     domainString = ''
-    for domainPart in DomainList:
-        domainString += '.' + domainPart
+    for domainPart in domainList:
+        # we use str() in case we deal with ints (as is the case when we get an IP address)
+        domainString += '.' + str(domainPart)
     # we do not need the first period, period.
     return domainString[1:]
+
+def getDomainList(domainString):
+    returnList = domainString.split('.')
+    if '' in returnList:
+        returnList.pop('')
+    return returnList
 
 def decodeResourceRecord(UDPcontent, offsetByte):
     # the domain name is stored as a list of subdomains (so separated by a period (.))
@@ -115,7 +122,7 @@ def decodeResourceRecord(UDPcontent, offsetByte):
         domainNamePart = ''
         bytesInspected = 0
         while bytesInspected < ardlength:
-            if pointerFound(struct.unpack_from("!H", UDPcontent, offsetByte)[0]):
+            if pointerFound(struct.unpack_from("!B", UDPcontent, offsetByte)[0], 1):
                 namePointer = decodePointer(struct.unpack_from("!H", UDPcontent, offsetByte)[0])
                 offsetByte += 2
                 bytesInspected += 2
@@ -185,8 +192,6 @@ def decodeRequest(UDPcontent):
     # for each request in the DNS query (qdcount in header)
     for query in range(qdcount):
         URL, currentByte = decodeLabels(UDPcontent, currentByte)
-
-        print(getDomainString(URL))
 
         # to get the qtype and qclass
         DNSrequest = struct.Struct("!2H")
@@ -395,20 +400,259 @@ requestDummy = {
     ]
 }
 
-print(decodeRequest(encodeRequest(requestDummy)))
+requestDummy2 = {
+    "id": 2,
+    "flags": {
+        "QR": False,
+        "Opcode": 0,
+        "AA": False,
+        "TC": False,
+        "RD": True,
+        "RA": False,
+        "Z": 0,
+        "RCODE": False
+    },
+    'qdcount': 1, 
+    'ancount': 0, 
+    'nscount': 0, 
+    'arcount': 0, 
+    'requests': [
+        {
+            'URL': ['nameserver', 'ml'], 
+            'qtype': 1, 
+            'qclass': 1
+        }
+    ],
+    'answers': [
+        # {
+        #     'URL': ['www', 'google', 'com'], 
+        #     'type': 1, 
+        #     'class': 1, 
+        #     'ttl': 77, 
+        #     'rdlength': 4, 
+        #     'rdata': [172, 217, 17, 68]
+        # }
+    ]
+}
+
+#print(decodeRequest(encodeRequest(requestDummy)))
+
+
+
+# program flow:
+# 1. request a domain to a root DNS server (from txt file, todo)
+#   - if no response (timeout) -> try another root DNS
+# 2. decode the answer, it contains the TLD nameservers in additional sec
+# 3. request the domain to the TLD DNS server (from step 2)
+#   - if no response (timeout) -> try another TLD nameserver
+# *. decode the answer, if no answers yet keep repeating this: traverse the tree
+
+# sock.sendto(x, ("198.41.0.4", 53))
+# answer = sock.recv(512)
+# rootResponse = decodeRequest(answer)
+# print("ROOT RESPONSE")
+# print(rootResponse)
 
 host = ("192.168.1.202", 53)
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(host)
-# sock.sendto("test".encode("utf-8"), ('8.8.8.8', 53))
-x = encodeRequest(requestDummy)
-sock.sendto(x, ("198.41.0.4", 53))
-answer = sock.recv(512)
-print(answer)
-x = decodeRequest(answer)
-print(x)
+
+# map domains to IP addresses
+simpleCache = {}
+
+rootDNSip = '198.41.0.4'
+
+# # note that domainName is a list of URL parts
+def resolveDomain(domainRequestObject, DNSip):
+    print("RESOLVE DOMAIN CALL")
+    print(f'Requesting {domainRequestObject} to {DNSip}')
+    requestPacket = {
+        "id": random.randint(0, 3000),
+        "flags": {
+            "QR": False,
+            "Opcode": 0,
+            "AA": False,
+            "TC": False,
+            "RD": True,
+            "RA": False,
+            "Z": 0,
+            "RCODE": False
+        },
+        'qdcount': 1, 
+        'ancount': 0, 
+        'nscount': 0, 
+        'arcount': 0, 
+        'requests': [
+            domainRequestObject
+        ],
+        'answers': []
+    }
+
+    sock.sendto(encodeRequest(requestPacket), (DNSip, 53))
+    DNSresponse = decodeRequest(sock.recv(512))
+
+    if DNSresponse['ancount'] > 0:
+        print("WE FOUND THE IP!!")
+        print(DNSresponse)
+        print("ANSWERS:")
+        print(DNSresponse['answers'])
+        return DNSresponse['answers'][0]['rdata']
+    else:
+        # this is a list of nameservers, we want the IPs
+        possibleAuthorities = []
+        for possibleAuthority in DNSresponse['authorities']:
+            if '' in possibleAuthority['rdata']:
+                possibleAuthority['rdata'].remove('')
+            # we check if the TLDs match, so that we can continue in the tree
+            if possibleAuthority['type'] == 2 and possibleAuthority['rdata'][-1] == domainRequestObject['URL'][-1]:
+                possibleAuthorities.append(possibleAuthority['rdata'])
+        # this is a list of IPs
+        actualAuthorities = []
+        for actualAuthority in DNSresponse['additional']:
+            if actualAuthority['type'] == 1 and actualAuthority['URL'] in possibleAuthorities:
+                actualAuthorities.append(actualAuthority['rdata'])
+        
+        if len(actualAuthorities) > 0:
+            # for now we only try once
+            # todo: try more!
+            resolveDomain(domainRequestObject, getDomainString(actualAuthorities[0]))
+        elif len(possibleAuthorities) > 0:
+            # we do not know which server to go to, so we first ask the IP of the nameserver
+            nameserverIP = resolveDomain(possibleAuthorities[0], DNSip)
+            resolveDomain(domainRequestObject, getDomainString(nameserverIP))
+        else:
+            print("I do not know what to do...")
+        
+requestObject = {
+    'URL': ['storm', 'nl'], 
+    'qtype': 1, 
+    'qclass': 1
+}
+
+resolveDomain(requestObject, '198.41.0.4')
 
 
+
+# rootRequest = {
+#     "id": random.randint(0, 3000),
+#     "flags": {
+#         "QR": False,
+#         "Opcode": 0,
+#         "AA": False,
+#         "TC": False,
+#         "RD": True,
+#         "RA": False,
+#         "Z": 0,
+#         "RCODE": False
+#     },
+#     'qdcount': 1, 
+#     'ancount': 0, 
+#     'nscount': 0, 
+#     'arcount': 0, 
+#     'requests': [
+#         {
+#             'URL': ['NL'], 
+#             'qtype': 1, 
+#             'qclass': 1
+#         }
+#     ],
+#     'answers': []
+# }
+
+# sock.sendto(encodeRequest(rootRequest), (rootDNSip, 53))
+# rootResponse = decodeRequest(sock.recv(512))
+
+# # this is a list of nameservers, we want the IPs
+# possibleAuthorities = []
+# for possibleAuthority in rootResponse['authorities']:
+#     if possibleAuthority['type'] == 2:
+#         possibleAuthorities.append(possibleAuthority['rdata'])
+# # this is a list of IPs
+# actualAuthorities = []
+# for actualAuthority in rootResponse['additional']:
+#     if actualAuthority['type'] == 1 and actualAuthority['URL'] in possibleAuthorities:
+#         actualAuthorities.append(actualAuthority['rdata'])
+# print(possibleAuthorities)
+
+
+# step1DNSip = getDomainString(actualAuthorities[0])
+
+# step1request = {
+#     "id": random.randint(0, 3000),
+#     "flags": {
+#         "QR": False,
+#         "Opcode": 0,
+#         "AA": False,
+#         "TC": False,
+#         "RD": True,
+#         "RA": False,
+#         "Z": 0,
+#         "RCODE": False
+#     },
+#     'qdcount': 1, 
+#     'ancount': 0, 
+#     'nscount': 0, 
+#     'arcount': 0, 
+#     'requests': [
+#         {
+#             'URL': ['storm', 'nl'], 
+#             'qtype': 1, 
+#             'qclass': 1
+#         }
+#     ],
+#     'answers': []
+# }
+
+# sock.sendto(encodeRequest(step1request), (step1DNSip, 53))
+# step1response = decodeRequest(sock.recv(512))
+
+# # this is a list of nameservers, we want the IPs
+# possibleAuthorities = []
+# for possibleAuthority in step1response['authorities']:
+#     if '' in possibleAuthority['rdata']:
+#         possibleAuthority['rdata'].remove('')
+#     if possibleAuthority['type'] == 2 and possibleAuthority['rdata'][-1] == 'nl':
+#         possibleAuthorities.append(possibleAuthority['rdata'])
+# # this is a list of IPs
+# actualAuthorities = []
+# for actualAuthority in step1response['additional']:
+#     if actualAuthority['type'] == 1 and actualAuthority['URL'] in possibleAuthorities:
+#         actualAuthorities.append(actualAuthority['rdata'])
+# print(actualAuthorities)
+
+
+# step2DNSip = getDomainString(actualAuthorities[0])
+
+# step2request = {
+#     "id": random.randint(0, 3000),
+#     "flags": {
+#         "QR": False,
+#         "Opcode": 0,
+#         "AA": False,
+#         "TC": False,
+#         "RD": True,
+#         "RA": False,
+#         "Z": 0,
+#         "RCODE": False
+#     },
+#     'qdcount': 1, 
+#     'ancount': 0, 
+#     'nscount': 0, 
+#     'arcount': 0, 
+#     'requests': [
+#         {
+#             'URL': ['storm', 'nl'], 
+#             'qtype': 1, 
+#             'qclass': 1
+#         }
+#     ],
+#     'answers': []
+# }
+
+# sock.sendto(encodeRequest(step2request), (step2DNSip, 53))
+# step2response = decodeRequest(sock.recv(512))
+
+# print(step2response)
 
 
 # refer to: https://www.cs.swarthmore.edu/~chaganti/cs43/f19/labs/lab3.html for a general workflow that is needed to implement the DNS server
