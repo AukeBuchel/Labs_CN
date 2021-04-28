@@ -108,6 +108,9 @@ def decodeResourceRecord(UDPcontent, offsetByte):
     # this list will be filled with data from the RDATA content (= usually the IP)
     ardata = []
 
+    # reserve the variable for our scope (MX only)
+    preference = 0
+
     # type A
     if atype == 1:
         for count in range(ardlength):
@@ -134,6 +137,9 @@ def decodeResourceRecord(UDPcontent, offsetByte):
                     namePointer = decodePointer(struct.unpack_from("!H", UDPcontent, pointerOffsetByte)[0])
                     domainNamePart, pointerOffsetByte = decodeLabel(UDPcontent, namePointer)
                     ardata.append(domainNamePart)
+                # todo: same fix as with NAME above
+                labels, pointerOffsetByte = decodeLabels(UDPcontent, pointerOffsetByte)
+                ardata += labels
             else:
                 oldOffsetByte = offsetByte
                 domainNamePart, offsetByte = decodeLabel(UDPcontent, offsetByte)
@@ -149,7 +155,12 @@ def decodeResourceRecord(UDPcontent, offsetByte):
             # we add the data piece to rdata
             # hex is used since IPv6 addresses are hexadecimal
             ardata.append(hex(rdataPiece))
-
+    # type MX:
+    elif atype == 15:
+        # preference is MX-only
+        preference, = struct.unpack_from("!H", UDPcontent, offsetByte)
+        offsetByte += 2
+        ardata, offsetByte = decodeLabels(UDPcontent, offsetByte)
 
     # we build the final resource record object for later access
     resourceRecordObject = {
@@ -161,6 +172,9 @@ def decodeResourceRecord(UDPcontent, offsetByte):
         'rdlength': ardlength,
         'rdata': ardata
     }
+
+    if atype == 15:
+        resourceRecordObject['preference'] = preference
 
     return resourceRecordObject, offsetByte
 
@@ -354,10 +368,22 @@ def encodeRequest(requestObject):
         exportBytes += struct.pack("!H", answer['rdlength'])
         currentByte += 2
 
+        # we append the MX preference if needed
+        if answer['type'] == 15:
+            preference = 0
+            if 'preference' not in answer:
+                print("MX records should have a preference, setting 0 now")
+            else:
+                preference = answer['preference']
+            exportBytes += struct.pack("!H", preference)
+            currentByte += 2
+
         # append the rdata
         for dataItem in answer['rdata']:
             exportBytes += struct.pack("!B", dataItem)
             currentByte += 1
+
+
 
     return exportBytes
 
@@ -447,12 +473,6 @@ requestDummy2 = {
 #   - if no response (timeout) -> try another TLD nameserver
 # *. decode the answer, if no answers yet keep repeating this: traverse the tree
 
-# sock.sendto(x, ("198.41.0.4", 53))
-# answer = sock.recv(512)
-# rootResponse = decodeRequest(answer)
-# print("ROOT RESPONSE")
-# print(rootResponse)
-
 host = ("192.168.1.202", 53)
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(host)
@@ -462,10 +482,13 @@ simpleCache = {}
 
 rootDNSip = '198.41.0.4'
 
-# # note that domainName is a list of URL parts
-def resolveDomain(domainRequestObject, DNSip):
+# note that domainName is a list of URL parts
+def resolveRequest(domainRequestObject, DNSip):
     print("RESOLVE DOMAIN CALL")
-    print(f'Requesting {domainRequestObject} to {DNSip}')
+    if DNSip == rootDNSip:
+        print(f'Requesting {domainRequestObject} to {DNSip} (ROOT DNS server)')
+    else:
+        print(f'Requesting {domainRequestObject} to {DNSip}')
     requestPacket = {
         "id": random.randint(0, 3000),
         "flags": {
@@ -491,6 +514,7 @@ def resolveDomain(domainRequestObject, DNSip):
     sock.sendto(encodeRequest(requestPacket), (DNSip, 53))
     DNSresponse = decodeRequest(sock.recv(512))
 
+    # this is the base case
     if DNSresponse['ancount'] > 0:
         print("WE FOUND THE IP!!")
         print(DNSresponse)
@@ -498,40 +522,55 @@ def resolveDomain(domainRequestObject, DNSip):
         print(DNSresponse['answers'])
         return DNSresponse['answers'][0]['rdata']
     else:
-        # this is a list of nameservers, we want the IPs
-        possibleAuthorities = []
-        for possibleAuthority in DNSresponse['authorities']:
-            if '' in possibleAuthority['rdata']:
-                possibleAuthority['rdata'].remove('')
-            # we check if the TLDs match, so that we can continue in the tree
-            if possibleAuthority['type'] == 2 and possibleAuthority['rdata'][-1] == domainRequestObject['URL'][-1]:
-                possibleAuthorities.append(possibleAuthority['rdata'])
-        # this is a list of IPs
-        actualAuthorities = []
-        for actualAuthority in DNSresponse['additional']:
-            if actualAuthority['type'] == 1 and actualAuthority['URL'] in possibleAuthorities:
-                actualAuthorities.append(actualAuthority['rdata'])
-        
-        if len(actualAuthorities) > 0:
-            # for now we only try once
-            # todo: try more!
-            resolveDomain(domainRequestObject, getDomainString(actualAuthorities[0]))
-        elif len(possibleAuthorities) > 0:
-            # we do not know which server to go to, so we first ask the IP of the nameserver
-            nameserverIP = resolveDomain(possibleAuthorities[0], DNSip)
-            resolveDomain(domainRequestObject, getDomainString(nameserverIP))
+        # create a mapping of nameservers (domains) and their IPs
+        nameservers = {}
+        for authority in DNSresponse['authorities']:
+            if authority['type'] == 2:
+                if '' in authority['rdata']:
+                    authority['rdata'].remove('')
+                nameservers[getDomainString(authority['rdata'])] = 'UNSET'
+        for addition in DNSresponse['additional']:
+            if addition['type'] == 1 and getDomainString(addition['URL']) in nameservers:
+                nameservers[getDomainString(addition['URL'])] = getDomainString(addition['rdata'])
+
+        print(nameservers)
+
+        nameserversContacted = 0
+        # for domain, ip in nameservers.items():
+        domain, ip = next(iter(nameservers.items()))
+        # we know the nameserver IP already
+        if ip != 'UNSET':
+            return resolveRequest(domainRequestObject, ip)
+        # we need to find the nameserver IP still
         else:
-            print("I do not know what to do...")
+            # same TLD, we can traverse the tree
+            if getDomainList(domain)[-1] == domainRequestObject['URL'][-1]:
+                requestObject = {
+                    'URL': getDomainList(domain), 
+                    'qtype': 1, 
+                    'qclass': 1
+                }
+                onTreeIP = resolveRequest(requestObject, DNSip)
+                print(f"WE GOT AN ON TREE IP: {onTreeIP}")
+                return resolveRequest(domainRequestObject, getDomainString(onTreeIP))
+            # different TLD, start from root again
+            else:
+                requestObject = {
+                    'URL': getDomainList(domain), 
+                    'qtype': 1, 
+                    'qclass': 1
+                }
+                offTreeIP = resolveRequest(requestObject, rootDNSip)
+                print(f"WE GOT AN OFF TREE IP: {offTreeIP}")
+                return resolveRequest(domainRequestObject, getDomainString(offTreeIP))
         
 requestObject = {
-    'URL': ['storm', 'nl'], 
-    'qtype': 1, 
+    'URL': ['hotmail', 'it'], 
+    'qtype': 15, 
     'qclass': 1
 }
 
-resolveDomain(requestObject, '198.41.0.4')
-
-
+resolveRequest(requestObject, '198.41.0.4')
 
 # rootRequest = {
 #     "id": random.randint(0, 3000),
