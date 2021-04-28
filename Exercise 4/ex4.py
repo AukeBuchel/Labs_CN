@@ -62,28 +62,37 @@ def pointerFound(byteContent, byteSize = 2):
 def decodePointer(byteContent):
     return (byteContent & 0x3ff) # 0011111111111111 bin = 3ff hex 
 
+def getDomainString(DomainList):
+    domainString = ''
+    for domainPart in DomainList:
+        domainString += '.' + domainPart
+    # we do not need the first period, period.
+    return domainString[1:]
+
 def decodeResourceRecord(UDPcontent, offsetByte):
     # the domain name is stored as a list of subdomains (so separated by a period (.))
     domainName = []
 
-    print(f"OFFSET BYTE: {offsetByte}")
-
-    # < rdlength
     if pointerFound(struct.unpack_from("!H", UDPcontent, offsetByte)[0]):
         namePointer = decodePointer(struct.unpack_from("!H", UDPcontent, offsetByte)[0])
         offsetByte += 2
         domainNamePart, pointerOffsetByte = decodeLabel(UDPcontent, namePointer)
         domainName.append(domainNamePart)
-        # the domain pointed to, can itself also contain pointers, 
-        # this is not included in the rdlength so we do not change bytesInspected (see RFC 4.1.4)
-        while pointerFound(struct.unpack_from("!H", UDPcontent, pointerOffsetByte)[0]):
-            namePointer = decodePointer(struct.unpack_from("!H", UDPcontent, pointerOffsetByte)[0])
-            domainNamePart, pointerOffsetByte = decodeLabel(UDPcontent, namePointer)
-            domainName.append(domainNamePart)
+        # NAME can be a a combination of pointers or labels which is complicated. Note that we use pointerOffsetByte here which is DIFFERENT from offsetByte
+        # pointerOffsetByte is used to iterate over the bytes pointed to by the pointer we are working on
+        # we stop if a delimiter byte is found (in the pointed-to domain, NAME is not delimited) or if no new pointer is found
+        while struct.unpack_from("!B", UDPcontent, pointerOffsetByte)[0] != 0 or pointerFound(struct.unpack_from("!B", UDPcontent, pointerOffsetByte)[0], 1):
+            # the domain pointed to, can itself also contain pointers, 
+            # this is not included in the rdlength so we do not change bytesInspected (see RFC 4.1.4)
+            while pointerFound(struct.unpack_from("!H", UDPcontent, pointerOffsetByte)[0]):
+                namePointer = decodePointer(struct.unpack_from("!H", UDPcontent, pointerOffsetByte)[0])
+                domainNamePart, pointerOffsetByte = decodeLabel(UDPcontent, namePointer)
+                domainName.append(domainNamePart)
+            labels, pointerOffsetByte = decodeLabels(UDPcontent, pointerOffsetByte)
+            domainName += labels
+            pointerOffsetByte -= 1
     else:
-        print(decodePointer(struct.unpack_from("!H", UDPcontent, offsetByte)[0]))
         raise TypeError("RR \'Name\' should be a pointer")
-
 
     # to get the qtype and qclass (TTL is 32-bit, 4 bytes, which is different)
     atype, aclass, attl, ardlength = struct.unpack_from("!2HIH", UDPcontent, offsetByte)
@@ -111,33 +120,40 @@ def decodeResourceRecord(UDPcontent, offsetByte):
                 offsetByte += 2
                 bytesInspected += 2
                 domainNamePart, pointerOffsetByte = decodeLabel(UDPcontent, namePointer)
-                print(domainNamePart)
                 ardata.append(domainNamePart)
                 # the domain pointed to, can itself also contain pointers, 
                 # this is not included in the rdlength so we do not change bytesInspected (see RFC 4.1.4)
                 while pointerFound(struct.unpack_from("!H", UDPcontent, pointerOffsetByte)[0]):
                     namePointer = decodePointer(struct.unpack_from("!H", UDPcontent, pointerOffsetByte)[0])
                     domainNamePart, pointerOffsetByte = decodeLabel(UDPcontent, namePointer)
-                    print(domainNamePart)
                     ardata.append(domainNamePart)
             else:
                 oldOffsetByte = offsetByte
                 domainNamePart, offsetByte = decodeLabel(UDPcontent, offsetByte)
                 bytesInspected += (offsetByte - oldOffsetByte)
-                print(domainNamePart)
                 ardata.append(domainNamePart)
+    # type AAA:
+    elif atype == 28:
+        for count in range(ardlength//2):
+            # each two bytes is an unsigned integer, IPv6 consists of 8 of these domain parts
+            rdataPiece, = struct.unpack_from("!H", UDPcontent, offsetByte)
+            offsetByte += 2
+
+            # we add the data piece to rdata
+            # hex is used since IPv6 addresses are hexadecimal
+            ardata.append(hex(rdataPiece))
+
 
     # we build the final resource record object for later access
     resourceRecordObject = {
         'URL': domainName,
+        'URLraw': getDomainString(domainName),
         'type': atype,
         'class': aclass,
         'ttl': attl,
         'rdlength': ardlength,
         'rdata': ardata
     }
-
-    print(resourceRecordObject)
 
     return resourceRecordObject, offsetByte
 
@@ -170,6 +186,8 @@ def decodeRequest(UDPcontent):
     for query in range(qdcount):
         URL, currentByte = decodeLabels(UDPcontent, currentByte)
 
+        print(getDomainString(URL))
+
         # to get the qtype and qclass
         DNSrequest = struct.Struct("!2H")
         qtype, qclass = DNSrequest.unpack_from(UDPcontent, currentByte)
@@ -179,6 +197,7 @@ def decodeRequest(UDPcontent):
         # we build the request object for later access
         requestObject = {
             'URL': URL,
+            'URLraw': getDomainString(URL),
             'qtype': qtype,
             'qclass': qclass
         }
@@ -203,8 +222,6 @@ def decodeRequest(UDPcontent):
         authorityObject, currentByte = decodeResourceRecord(UDPcontent, currentByte)
         # we add the authority object to the list of answer objects
         authorities.append(authorityObject)
-
-    print(f"currently at byte {currentByte}, which is {UDPcontent[currentByte//2]}")
 
     # a list of additional records
     additional = []
@@ -231,7 +248,10 @@ def decodeRequest(UDPcontent):
 def encodeRequest(requestObject):
     # we keep track of the currentByte, again
     currentByte = 0
-    # exportBytes += bytes()
+
+    # we have no time for this
+    requestObject['nscount'] = 0
+    requestObject['arcount'] = 0
 
     # pointers we can reference later
     pointers = {}
@@ -385,7 +405,10 @@ x = encodeRequest(requestDummy)
 sock.sendto(x, ("198.41.0.4", 53))
 answer = sock.recv(512)
 print(answer)
-print(decodeRequest(answer))
+x = decodeRequest(answer)
+print(x)
+
+
 
 
 # refer to: https://www.cs.swarthmore.edu/~chaganti/cs43/f19/labs/lab3.html for a general workflow that is needed to implement the DNS server
