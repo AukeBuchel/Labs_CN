@@ -20,86 +20,78 @@ import ctypes # to create a buffer
 
 # use this function ONLY if certain that this is a label, it does NOT detect pointers
 def decodeLabel(UDPcontent, offsetByte):
-    domainPartLength, = struct.unpack_from("!B", UDPcontent, offsetByte)
+    labelPartLength, = struct.unpack_from("!B", UDPcontent, offsetByte)
     offsetByte += 1
 
-    domainPartString = ''
-    for count in range(domainPartLength):
+    label = ''
+    for count in range(labelPartLength):
         # the bytes are characters so we can use 'c' from struct
         char, = struct.unpack_from("!c", UDPcontent, offsetByte)
         offsetByte += 1
-        
         # append the character to the string
-        domainPartString += char.decode("utf-8")
+        label += char.decode("utf-8")
+    return label, offsetByte
 
-    return domainPartString, offsetByte
+def decodeLabels(UDPcontent, offsetByte):
+    # note that we explicitly do not increase the offsetByte, the byte will be read again
+    labelPartLength, = struct.unpack_from("!B", UDPcontent, offsetByte)
 
+    labels = []
+    # 0x00 is the delimiter byte (but also pointer may occur)
+    while labelPartLength != 0 and not pointerFound(labelPartLength, 1):
+        label, offsetByte = decodeLabel(UDPcontent, offsetByte)
+        labels.append(label)
+        # note that we explicitly do not increase the offsetByte, the byte may be be read again
+        labelPartLength, = struct.unpack_from("!B", UDPcontent, offsetByte)
+    # if the while loop has stopped, the delimiter byte will not be read again so we can increase offsetByte
+    offsetByte += 1 
+
+    return labels, offsetByte
+
+# pointers always span two octets, as described in the RFC but we can also detect them with only one byte (python wont let us use isPointer)
+def pointerFound(byteContent, byteSize = 2):
+    # check if it is really a pointer (starts with two 1-bits) or just a regular domain label
+    if byteSize == 2:
+        return (byteContent & 0xc000) != 0 # 1100000000000000 bin = c000 hex 
+    elif byteSize == 1:
+        return (byteContent & 0xc0) != 0 # 11000000 bin = c0 hex 
+    else:
+        raise("This byte size is not supported.")
+
+# again, pointers are two octets
+def decodePointer(byteContent):
+    return (byteContent & 0x3ff) # 0011111111111111 bin = 3ff hex 
 
 def decodeResourceRecord(UDPcontent, offsetByte):
-     # NAME is a pointer as described by the RFC
-    domainPointer, = struct.unpack_from("!H", UDPcontent, offsetByte)
-    offsetByte += 2
+    # the domain name is stored as a list of subdomains (so separated by a period (.))
+    domainName = []
 
-    # check if it is really a pointer (starts with two 1-bits) or just a regular domain description. Both are allowed by the RFC
-    isPointer = (domainPointer & 0xc000) != 0
+    print(f"OFFSET BYTE: {offsetByte}")
 
-    # if it is indeed a pointer, we set the current byte to the byte pointed to by this pointer, else we need to discard the pointer bytes
-    if isPointer:
-        # according to the RFC, pointer bytes start with 2 1-bits (to distinguish them from labels, see RFC) so we need to remove those
-        domainPointer = domainPointer & 0x3ff # 0011111111111111 bin = 3ff hex 
-        # we will access the pointer from now on so we need to store the currentByte position to continue the program later
-        originalOffsetByte = offsetByte
-        # subtract the byte offset from the current byte (subtraction is possible since pointers are only used for earlier occurrences, see RFC)
-        offsetByte = domainPointer
+    # < rdlength
+    if pointerFound(struct.unpack_from("!H", UDPcontent, offsetByte)[0]):
+        namePointer = decodePointer(struct.unpack_from("!H", UDPcontent, offsetByte)[0])
+        offsetByte += 2
+        domainNamePart, pointerOffsetByte = decodeLabel(UDPcontent, namePointer)
+        domainName.append(domainNamePart)
+        # the domain pointed to, can itself also contain pointers, 
+        # this is not included in the rdlength so we do not change bytesInspected (see RFC 4.1.4)
+        while pointerFound(struct.unpack_from("!H", UDPcontent, pointerOffsetByte)[0]):
+            namePointer = decodePointer(struct.unpack_from("!H", UDPcontent, pointerOffsetByte)[0])
+            domainNamePart, pointerOffsetByte = decodeLabel(UDPcontent, namePointer)
+            domainName.append(domainNamePart)
     else:
-        # we need to 'reread' the bytes because they are not used for a pointer but for labels
-        offsetByte -= 2
+        print(decodePointer(struct.unpack_from("!H", UDPcontent, offsetByte)[0]))
+        raise TypeError("RR \'Name\' should be a pointer")
 
 
-    # according to the RFC, to get qname, we get a length byte followed by the length amount of character bytes
-    domainPartLength, = struct.unpack_from("!B", UDPcontent, offsetByte)
-    offsetByte += 1
-
-    # the URL list we will fill with the requested domain parts (TLD is always last item)
-    URL = []
-
-    #0x00 is the delimiter byte, we check for that
-    while domainPartLength != 0:
-        domainPartString = ''
-        for count in range(domainPartLength):
-            # the bytes are characters so we can use 'c' from struct
-            char, = struct.unpack_from("!c", UDPcontent, offsetByte)
-            offsetByte += 1
-            # append the character to the string
-            domainPartString += char.decode("utf-8")
-        
-        # append the string to the list
-        URL.append(domainPartString)
-
-        domainPartLength, = struct.unpack_from("!B", UDPcontent, offsetByte)
-        offsetByte += 1
-
-    # if we worked with a pointer, we need to continue from where we left of, else we can just continue
-    if isPointer:
-        # we are done with the pointed address, restore the original byte position
-        offsetByte = originalOffsetByte
-
-    # to get the qtype and qclass
-    atype, = struct.unpack_from("!H", UDPcontent, offsetByte)
-    offsetByte += 2
-    aclass, = struct.unpack_from("!H", UDPcontent, offsetByte)
-    offsetByte += 2
-    # TTL is an unsigned 32 bit (4 byte) integer so we can use struct(I)
-    attl, = struct.unpack_from("!I", UDPcontent, offsetByte)
-    offsetByte += 4
-    ardlength, = struct.unpack_from("!H", UDPcontent, offsetByte)
-    offsetByte += 2 
-
+    # to get the qtype and qclass (TTL is 32-bit, 4 bytes, which is different)
+    atype, aclass, attl, ardlength = struct.unpack_from("!2HIH", UDPcontent, offsetByte)
+    offsetByte += 10
 
     # this list will be filled with data from the RDATA content (= usually the IP)
     ardata = []
 
-    # todo: implement multiple types (currently only A but also NS should be supported)
     # type A
     if atype == 1:
         for count in range(ardlength):
@@ -109,58 +101,43 @@ def decodeResourceRecord(UDPcontent, offsetByte):
 
             # we add the data piece to rdata
             ardata.append(rdataPiece)
-
     # type NS
     elif atype == 2:
-        currentDomainLength = 0
-        domainPartString = ''
-
-        print(f'Data length = {ardlength}')
-
+        domainNamePart = ''
         bytesInspected = 0
         while bytesInspected < ardlength:
-            currentDomainLength, = struct.unpack_from("!B", UDPcontent, offsetByte)
-            offsetByte += 1
-            bytesInspected += 1
-
-            URLpart = ''
-
-            isPointer = (currentDomainLength & 0xc0) != 0
-            if isPointer:
-                # since a pointer is two octets, we 'reread' the bytes (like rewinding a tape) and then read the two-byte pointer in full
-                offsetByte -= 1
-                bytesInspected -= 1
-                labelPointer, = struct.unpack_from("!H", UDPcontent, offsetByte)
+            if pointerFound(struct.unpack_from("!H", UDPcontent, offsetByte)[0]):
+                namePointer = decodePointer(struct.unpack_from("!H", UDPcontent, offsetByte)[0])
                 offsetByte += 2
                 bytesInspected += 2
-
-                # we remove the pointer indicators (from RFC, first two bits are 1 if pointer)
-                labelPointer = labelPointer & 0x3ff # 0011111111111111 bin = 3ff hex 
-                # blah to prevent "too many values to unpack"
-                URLpart, blah = decodeLabel(UDPcontent, labelPointer)
-            # we do not have a pointer
+                domainNamePart, pointerOffsetByte = decodeLabel(UDPcontent, namePointer)
+                print(domainNamePart)
+                ardata.append(domainNamePart)
+                # the domain pointed to, can itself also contain pointers, 
+                # this is not included in the rdlength so we do not change bytesInspected (see RFC 4.1.4)
+                while pointerFound(struct.unpack_from("!H", UDPcontent, pointerOffsetByte)[0]):
+                    namePointer = decodePointer(struct.unpack_from("!H", UDPcontent, pointerOffsetByte)[0])
+                    domainNamePart, pointerOffsetByte = decodeLabel(UDPcontent, namePointer)
+                    print(domainNamePart)
+                    ardata.append(domainNamePart)
             else:
-                # we need to 'reread' the first byte to keep the decodeLabel() function working properly, after all we love modularity
-                offsetByte -= 1
-                bytesInspected -= 1
                 oldOffsetByte = offsetByte
-                URLpart, offsetByte = decodeLabel(UDPcontent, offsetByte)
-                # after the label decoding, the offset byte has increased, we measure with how much bytes it has increased, this is the number of bytes we have already checked (needed for the while loop)
+                domainNamePart, offsetByte = decodeLabel(UDPcontent, offsetByte)
                 bytesInspected += (offsetByte - oldOffsetByte)
-
-            print(URLpart)
-            print(f"bytes inspected ={bytesInspected}")
-            ardata.append(URLpart)
+                print(domainNamePart)
+                ardata.append(domainNamePart)
 
     # we build the final resource record object for later access
     resourceRecordObject = {
-        'URL': URL,
+        'URL': domainName,
         'type': atype,
         'class': aclass,
         'ttl': attl,
         'rdlength': ardlength,
         'rdata': ardata
     }
+
+    print(resourceRecordObject)
 
     return resourceRecordObject, offsetByte
 
@@ -188,32 +165,10 @@ def decodeRequest(UDPcontent):
     currentByte = DNSheader.size
     # a list that is filled with the query objects that are decoded (if any)
     requests = []
-    # a list that is filled in with the query answers that are decoded (if any)
-    answers = []
 
     # for each request in the DNS query (qdcount in header)
     for query in range(qdcount):
-        # according to the RFC, to get qname, we get a length byte followed by the length amount of character bytes
-        domainPartLength, = struct.unpack_from("!B", UDPcontent, currentByte)
-        currentByte += 1
-        # the URL list we will fill with the requested domain parts (TLD is always last item)
-        URL = []
-
-        #0x00 is the delimiter byte, we check for that
-        while domainPartLength != 0:
-            domainPartString = ''
-            for count in range(domainPartLength):
-                # the bytes are characters so we can use 'c' from struct
-                char, = struct.unpack_from("!c", UDPcontent, currentByte)
-                currentByte += 1
-                # append the character to the string
-                domainPartString += char.decode("utf-8")
-            
-            # append the string to the list
-            URL.append(domainPartString)
-
-            domainPartLength, = struct.unpack_from("!B", UDPcontent, currentByte)
-            currentByte += 1
+        URL, currentByte = decodeLabels(UDPcontent, currentByte)
 
         # to get the qtype and qclass
         DNSrequest = struct.Struct("!2H")
@@ -231,6 +186,9 @@ def decodeRequest(UDPcontent):
         # we add the request object to the list of request objects
         requests.append(requestObject)
 
+    # a list that is filled in with the query answers that are decoded (if any)
+    answers = []
+
     # for each answer in the DNS query (ancount in header)
     for answer in range(ancount):
         answerObject, currentByte = decodeResourceRecord(UDPcontent, currentByte)
@@ -242,11 +200,20 @@ def decodeRequest(UDPcontent):
 
     # for each authority in the DNS query (nscount in header)
     for authority in range(nscount):
-        print(f"starting at {currentByte}")
         authorityObject, currentByte = decodeResourceRecord(UDPcontent, currentByte)
-        print(f"after authority, cb = {currentByte}")
         # we add the authority object to the list of answer objects
         authorities.append(authorityObject)
+
+    print(f"currently at byte {currentByte}, which is {UDPcontent[currentByte//2]}")
+
+    # a list of additional records
+    additional = []
+
+    # for each authority in the DNS query (nscount in header)
+    for addition in range(arcount):
+        additionObject, currentByte = decodeResourceRecord(UDPcontent, currentByte)
+        # we add the authority object to the list of answer objects
+        additional.append(additionObject)
 
     return {
         "id": id,
@@ -257,7 +224,8 @@ def decodeRequest(UDPcontent):
         "arcount": arcount,
         "requests": requests,
         "answers": answers,
-        "authorities": authorities
+        "authorities": authorities,
+        "additional": additional
     }
 
 def encodeRequest(requestObject):
@@ -335,7 +303,7 @@ def encodeRequest(requestObject):
 
         if rawURL in pointers:
             URLpointer = pointers[rawURL]
-            # per RFC defintion, pointers start with two 1-bits at the MSB position
+            # per RFC defintion, pointers start with two 1-bits at the MSB position (just like in decoding)
             exportBytes += struct.pack("!H", URLpointer | 0xc000)
             currentByte += 2
         else:
@@ -407,13 +375,9 @@ requestDummy = {
     ]
 }
 
-
-
-
-
 print(decodeRequest(encodeRequest(requestDummy)))
 
-host = ("192.168.1.198", 53)
+host = ("192.168.1.202", 53)
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(host)
 # sock.sendto("test".encode("utf-8"), ('8.8.8.8', 53))
