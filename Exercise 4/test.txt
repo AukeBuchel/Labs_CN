@@ -1,0 +1,45 @@
+# requestObject = {
+#     #'URL': ['content-signature-2', 'cdn', 'mozilla', 'net'], 
+#     'URL': ['ocsp', 'pki', 'goog'],
+#     'qtype': 1, 
+#     'qclass': 1
+# }
+
+# rootSelector = 0
+# solvedRequest = resolveRequest(requestObject, rootServers[rootSelector])
+# while solvedRequest == -1:
+#     # there are 13 root servers to select from
+#     rootSelector = rootSelector % 12
+#     # we should try another root
+#     solvedRequest = resolveRequest(request, rootServers[rootSelector])
+#     # increase the root selector
+#     rootSelector += 1
+# print(terminalColors.green, 'Resolved', terminalColors.end, getDomainString(requestObject['URL']), 'to', getDomainString(solvedRequest[0]['rdata']))
+
+# responseTest = {
+#     "id": random.randint(0, 3000),
+#     "flags": {
+#         "QR": True,
+#         "Opcode": 0,
+#         "AA": False,
+#         "TC": False,
+#         "RD": True,
+#         "RA": False,
+#         "Z": 0,
+#         "RCODE": False
+#     },
+#     'qdcount': 1, 
+#     'ancount': 0, 
+#     'nscount': 0, 
+#     'arcount': 0, 
+#     'requests': [
+#         {
+#             'URL': ['NL'], 
+#             'qtype': 1, 
+#             'qclass': 1
+#         }
+#     ],
+#     'answers': solvedRequest
+# }
+
+# print(encodeRequest(responseTest))
