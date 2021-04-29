@@ -26,6 +26,37 @@ class terminalColors:
     end = '\033[0m'
     bold = '\033[1m'
 
+class debug:
+    def info(title, content, indent = '', encaps = True):
+        if encaps:
+            print(f"{indent}[{terminalColors.blue}{terminalColors.bold}{title}{terminalColors.end}] {content}")
+        else:
+            print(f"{indent}{terminalColors.blue}{terminalColors.bold}{title}{terminalColors.end} {content}")
+
+    def warning(title, content, indent = '', encaps = True):
+        if encaps:
+            print(f"{indent}[{terminalColors.yellow}{terminalColors.bold}{title}{terminalColors.end}] {content}")
+        else:
+            print(f"{indent}{terminalColors.yellow}{terminalColors.bold}{title}{terminalColors.end} {content}")
+
+    def success(title, content, indent = '', encaps = True):
+        if encaps:
+            print(f"{indent}[{terminalColors.green}{terminalColors.bold}{title}{terminalColors.end}] {content}")
+        else:
+            print(f"{indent}{terminalColors.green}{terminalColors.bold}{title}{terminalColors.end} {content}")
+    
+    def error(title, content, indent = '', encaps = True):
+        if encaps:
+            print(f"{indent}[{terminalColors.red}{terminalColors.bold}{title}{terminalColors.end}] {content}")
+        else:
+            print(f"{indent}{terminalColors.red}{terminalColors.bold}{title}{terminalColors.end} {content}")
+
+    def neutral(title, content, indent = '', encaps = True):
+        if encaps:
+            print(f"{indent}[{terminalColors.bold}{title}{terminalColors.end}] {content}")
+        else:
+            print(f"{indent}{terminalColors.bold}{title}{terminalColors.end} {content}")
+
 # use this function ONLY if certain that this is a label, it does NOT detect pointers
 def decodeLabel(UDPcontent, offsetByte):
     labelPartLength, = struct.unpack_from("!B", UDPcontent, offsetByte)
@@ -107,7 +138,7 @@ def decodeResourceRecord(UDPcontent, offsetByte):
             domainName += labels
             pointerOffsetByte -= 1
     else:
-        raise TypeError("RR \'Name\' should be a pointer")
+        domainName, offsetByte = decodeLabels(UDPcontent, offsetByte)
 
     # to get the qtype and qclass (TTL is 32-bit, 4 bytes, which is different)
     atype, aclass, attl, ardlength = struct.unpack_from("!2HIH", UDPcontent, offsetByte)
@@ -145,7 +176,6 @@ def decodeResourceRecord(UDPcontent, offsetByte):
                     namePointer = decodePointer(struct.unpack_from("!H", UDPcontent, pointerOffsetByte)[0])
                     domainNamePart, pointerOffsetByte = decodeLabel(UDPcontent, namePointer)
                     ardata.append(domainNamePart)
-                # todo: same fix as with NAME above
                 labels, pointerOffsetByte = decodeLabels(UDPcontent, pointerOffsetByte)
                 ardata += labels
             else:
@@ -164,12 +194,15 @@ def decodeResourceRecord(UDPcontent, offsetByte):
             # hex is used since IPv6 addresses are hexadecimal
             ardata.append(hex(rdataPiece))
     # type MX
-    elif atype == 15 or atype == 5:
+    elif atype == 15:
         # preference is MX-only
         preference, = struct.unpack_from("!H", UDPcontent, offsetByte)
         offsetByte += 2
         ardata, offsetByte = decodeLabels(UDPcontent, offsetByte)
 
+
+    # ['google', 'com']
+    # -> google.com
 
     # we build the final resource record object for later access
     resourceRecordObject = {
@@ -204,7 +237,7 @@ def decodeRequest(UDPcontent, decodeAllSections = True):
         "RD": (flagsRaw & 0x100) != 0,  # 0000000100000000 dec = 100 hex (1 bit) (boolean bit)
         "RA": (flagsRaw & 0x80) != 0,  # 00000000010000000 dec = 80 hex (1 bit) (boolean bit)
         "Z": (flagsRaw & 0x70) >> 4,  # 00000000001110000 dec = 70 hex (3 bits) (value bit on position 4-6 so we shift 4 bits to the right)
-        "RCODE": (flagsRaw & 0xF) != 0,  # 0000000000001111 dec = F hex (4 bits) (boolean bit)
+        "RCODE": (flagsRaw & 0xF),  # 0000000000001111 dec = F hex (4 bits)
     }
 
     # offset that keeps track of the current byte that we access, DNSheader is 6 * H which is 6 * 16 bits which is 12 * 8 bits so DNSheader.size = 12 (bytes)
@@ -246,7 +279,7 @@ def decodeRequest(UDPcontent, decodeAllSections = True):
     # a list of authorities
     authorities = []
 
-    if decodeAllSections:
+    if decodeAllSections and flags['RCODE'] != 3:
         # for each authority in the DNS query (nscount in header)
         for authority in range(nscount):
             authorityObject, currentByte = decodeResourceRecord(UDPcontent, currentByte)
@@ -256,7 +289,7 @@ def decodeRequest(UDPcontent, decodeAllSections = True):
     # a list of additional records
     additional = []
 
-    if decodeAllSections:
+    if decodeAllSections and flags['RCODE'] != 3:
         # for each authority in the DNS query (nscount in header)
         for addition in range(arcount):
             additionObject, currentByte = decodeResourceRecord(UDPcontent, currentByte)
@@ -349,7 +382,6 @@ def encodeRequest(requestObject):
     # we populate the bytes to export with the answers
     for answer in requestObject['answers']:
         rawURL = ''
-        print(f" encoding answer {answer}")
         for domainPart in answer['URL']:
             rawURL += domainPart
 
@@ -395,88 +427,7 @@ def encodeRequest(requestObject):
         for dataItem in answer['rdata']:
             exportBytes += struct.pack("!B", dataItem)
             currentByte += 1
-
-
-
     return exportBytes
-
-# dummy object to test the request decoding
-responseDummy = b"\x78\xca\x81\x80\x00\x01\x00\x01\x00\x00\x00\x01\x03\x77\x77\x77\x06\x67\x6f\x6f\x67\x6c\x65\x03\x63\x6f\x6d\x00\x00\x01\x00\x01\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x4d\x00\x04\xac\xd9\x11\x44\x00\x00\x29\x04\xd0\x00\x00\x00\x00\x00\x00"
-
-# dummy object to test the request encoding
-requestDummy = {
-    "id": 2,
-    "flags": {
-        "QR": False,
-        "Opcode": 0,
-        "AA": False,
-        "TC": False,
-        "RD": True,
-        "RA": False,
-        "Z": 0,
-        "RCODE": False
-    },
-    'qdcount': 1, 
-    'ancount': 0, 
-    'nscount': 0, 
-    'arcount': 0, 
-    'requests': [
-        {
-            'URL': ['www', 'storm', 'vu'], 
-            'qtype': 1, 
-            'qclass': 1
-        }
-    ],
-    'answers': [
-        # {
-        #     'URL': ['www', 'google', 'com'], 
-        #     'type': 1, 
-        #     'class': 1, 
-        #     'ttl': 77, 
-        #     'rdlength': 4, 
-        #     'rdata': [172, 217, 17, 68]
-        # }
-    ]
-}
-
-requestDummy2 = {
-    "id": 2,
-    "flags": {
-        "QR": False,
-        "Opcode": 0,
-        "AA": False,
-        "TC": False,
-        "RD": True,
-        "RA": False,
-        "Z": 0,
-        "RCODE": False
-    },
-    'qdcount': 1, 
-    'ancount': 0, 
-    'nscount': 0, 
-    'arcount': 0, 
-    'requests': [
-        {
-            'URL': ['nameserver', 'ml'], 
-            'qtype': 1, 
-            'qclass': 1
-        }
-    ],
-    'answers': [
-        # {
-        #     'URL': ['www', 'google', 'com'], 
-        #     'type': 1, 
-        #     'class': 1, 
-        #     'ttl': 77, 
-        #     'rdlength': 4, 
-        #     'rdata': [172, 217, 17, 68]
-        # }
-    ]
-}
-
-#print(decodeRequest(encodeRequest(requestDummy)))
-
-
 
 # program flow:
 # 1. request a domain to a root DNS server (from txt file, todo)
@@ -493,18 +444,19 @@ sock.bind(host)
 # map domains to IP addresses
 simpleCache = {}
 
-rootDNSip = '198.41.0.4'
-
 rootServers = ['198.41.0.4', '199.9.14.201', '192.33.4.12', '199.7.91.13', '192.203.230.10', '192.5.5.241', '192.112.36.4', '198.97.190.53', '192.36.148.17', '192.58.128.30', '193.0.14.129', '199.7.83.42', '202.12.27.33' ]
+
+debugOn = True
 
 # note that domainName is a list of URL parts
 def resolveRequest(domainRequestObject, DNSip, indent = ''):
     if '' in domainRequestObject['URL']:
         domainRequestObject['URL'].remove('')
-    if DNSip in rootServers:
-        print(indent, terminalColors.green, 'Resolve call', terminalColors.end, 'to resolve', getDomainString(domainRequestObject['URL']), 'sent to', DNSip, '(root server)')
-    else:
-        print(indent, terminalColors.green, 'Resolve call', terminalColors.end, 'to resolve', getDomainString(domainRequestObject['URL']), 'sent to', DNSip)
+    if debugOn:
+        if DNSip in rootServers:
+            debug.info('Trying to resolve', getDomainString(domainRequestObject['URL']) + ' at server ' + DNSip + ' (root server)', indent = indent, encaps = False)
+        else:
+            debug.info('Trying to resolve', getDomainString(domainRequestObject['URL']) + ' at server ' + DNSip, indent = indent, encaps = False)
     requestPacket = {
         "id": random.randint(0, 3000),
         "flags": {
@@ -528,19 +480,32 @@ def resolveRequest(domainRequestObject, DNSip, indent = ''):
     }
 
     sock.sendto(encodeRequest(requestPacket), (DNSip, 53))
-    sock.settimeout(5)
+    sock.settimeout(1)
     try:
-        DNSresponse = decodeRequest(sock.recv(512))
-        while DNSresponse['id'] != requestPacket['id']:
-            print("we did not order this")
-            DNSresponse = decodeRequest(sock.recv(512))
+        correctResponse = False
+        DNSresponse = {}
+        # if IP send to and IP received from are not equal, this packet does not belong here
+        while not correctResponse:
+            DNSresponseRaw, DNSresponseAddress = sock.recvfrom(512)
+            while DNSresponseAddress[0] != DNSip:
+                DNSresponseRaw, DNSresponseAddress = sock.recvfrom(512)   
+            DNSresponse = decodeRequest(DNSresponseRaw)
+            if DNSresponse['id'] == requestPacket['id']:
+                correctResponse = True
     except socket.timeout:
         # it is for the calling function to fix this
-        print(indent, 'Call', terminalColors.yellow, 'timed out', terminalColors.end)
+        if debugOn:
+            debug.warning('Timeout', 'DNS response did not return in time', indent=indent, encaps=False)
         return -1
 
+    if DNSresponse['flags']['RCODE'] == 3:
+        if debugOn:
+            debug.warning('No such name', 'Requested domain does not have an IP', indent=indent, encaps=False)
+        return -2
+
     if DNSresponse['ancount'] > 0:
-        print(indent, terminalColors.green, 'Answer(s) found', terminalColors.end, DNSresponse['answers'])
+        if debugOn:
+            debug.success('Answer found', getDomainString(DNSresponse['answers'][0]['rdata']), indent=indent, encaps=False)
         for answer in DNSresponse['answers']:
             if answer['type'] == 5:
                 requestObject = {
@@ -548,7 +513,7 @@ def resolveRequest(domainRequestObject, DNSip, indent = ''):
                     'qtype': 1, 
                     'qclass': 1
                 }
-                return resolveRequest(requestObject, rootServers[0], indent + '  ')
+                return resolveRequest(requestObject, rootServers[0], indent + '\t')
         return DNSresponse['answers']
     else:
         # create a mapping of nameservers (domains) and their IPs
@@ -567,7 +532,7 @@ def resolveRequest(domainRequestObject, DNSip, indent = ''):
         for domain, ip in nameservers.items():
             # we know the nameserver IP already
             if ip != 'UNSET':
-                foundIP = resolveRequest(domainRequestObject, ip, indent + '  ')
+                foundIP = resolveRequest(domainRequestObject, ip, indent + '\t')
                 if foundIP == -1 or foundIP == None:
                     # try another IP in the for-loop
                     continue
@@ -582,13 +547,15 @@ def resolveRequest(domainRequestObject, DNSip, indent = ''):
                         'qtype': 1, 
                         'qclass': 1
                     }
-                    onTreeIP = resolveRequest(requestObject, DNSip, indent + '  ')
+                    onTreeIP = resolveRequest(requestObject, DNSip, indent + '\t')
                     if onTreeIP == -1 or onTreeIP == None:
                         return -1
+                    if onTreeIP == -2:
+                        return -2
                     for IPresponse in onTreeIP:
-                        responseObject = resolveRequest(domainRequestObject, getDomainString(IPresponse['rdata']), indent + '  ')
+                        responseObject = resolveRequest(domainRequestObject, getDomainString(IPresponse['rdata']), indent + '\t')
                         if responseObject != -1 and responseObject != None:
-                            return  responseObject
+                            return responseObject
                 # different TLD, start from root again
                 else:
                     requestObject = {
@@ -605,61 +572,92 @@ def resolveRequest(domainRequestObject, DNSip, indent = ''):
                         offTreeIP = resolveRequest(requestObject, rootServers[rootSelector], indent)
                         # increase the root selector
                         rootSelector += 1
+                    if offTreeIP == -2:
+                        return -2
                     for IPresponse in offTreeIP:
-                        responseObject = resolveRequest(domainRequestObject, getDomainString(IPresponse['rdata']), indent + '  ')
+                        responseObject = resolveRequest(domainRequestObject, getDomainString(IPresponse['rdata']), indent + '\t')
                         if responseObject != -1 and responseObject != None:
                             return responseObject
 
-x = 0
-while x < 10:
-    # always 512 bytes
-    userRequest, userAddress = sock.recvfrom(512)
-    userRequest = decodeRequest(userRequest)
+while True:
+    try:
+        # always 512 bytes
+        userRequest, userAddress = sock.recvfrom(512)
+        debug.info('Incoming packet', 'from ' + str(userAddress[0]))
+        userRequest = decodeRequest(userRequest, False)
 
-    print(terminalColors.blue, "[NEW REQUEST] (->)", terminalColors.end, userRequest['requests'])
+        # we do not want responses so we let this slide
+        if (userRequest['flags']['QR']):
+            debug.warning('No request', 'this packet is dropped since it was a response', encaps=False)
+            continue
 
-    # we do not want responses so we let this slide
-    if (userRequest['flags']['QR']):
-        print('This request was a', terminalColors.yellow, 'response', terminalColors.end, ', it is dropped.')
-        continue
+        for request in userRequest['requests']:
+            # we can only resolve type 1 (A) and type 15 (MX) records
+            if (request['qtype'] == 1 or request['qtype'] == 15):
+                reqType = 'UNKNOWN'
+                if request['qtype'] == 1:
+                    reqType = 'A'
+                elif request['qtype'] == 15:
+                    reqType = 'MX'
+                debug.neutral('Resolving query', reqType + ' ' + getDomainString(request['URL']), encaps=False)
+                try:
+                    rootSelector = 0
+                    solvedRequest = resolveRequest(request, rootServers[rootSelector])
+                    while solvedRequest == -1 or solvedRequest == None:
+                        # there are 13 root servers to select from
+                        rootSelector = rootSelector % 12
+                        # we should try another root
+                        solvedRequest = resolveRequest(request, rootServers[rootSelector])
+                        # increase the root selector
+                        rootSelector += 1
+                    if solvedRequest == -2:
+                        # we set the RCODE flag for the response we send to the user, 3 is NO SUCH NAME
+                        userRequest['flags']['RCODE'] = 3
+                        debug.success('Resolved query', reqType + ' ' + getDomainString(request['URL']) + ' NO SUCH NAME', encaps=False)
+                    else:
+                        debug.success('Resolved query', reqType + ' ' + getDomainString(request['URL']) + ' to ' + getDomainString(solvedRequest[0]['rdata']), encaps=False)
+                        for answer in solvedRequest:
+                            userRequest['answers'].append(answer)
+                except Exception as e:
+                    debug.error('Query resolving error', e, encaps=False)
+            else:
+                debug.warning('Unsupported query', 'query type ' + str(request['qtype']), encaps=False)
+        
+        userRequest['flags']['QR'] = True
+        userRequest['ancount'] = len(userRequest['answers'])
 
-    for request in userRequest['requests']:
-        print(terminalColors.blue, 'Resolving', terminalColors.end, getDomainString(request['URL']))
-        # we can only resolve type 1 (A) and type 15 (MX) records
-        if request['qtype'] == 1 or request['qtype'] == 15:
-            supportedType = request['qtype']
-            print(terminalColors.green, f'Type {supportedType} is supported', terminalColors.end)
-            print(request)
-            # try:
-            rootSelector = 0
-            solvedRequest = resolveRequest(request, rootServers[rootSelector])
-            while solvedRequest == -1 or solvedRequest == None:
-                print(f"{terminalColors.yellow}Timeout{terminalColors.end} of root server")
-                # there are 13 root servers to select from
-                rootSelector = rootSelector % 12
-                # we should try another root
-                solvedRequest = resolveRequest(request, rootServers[rootSelector])
-                # increase the root selector
-                rootSelector += 1
-            print(terminalColors.green, 'Resolved', terminalColors.end, getDomainString(request['URL']), 'to', getDomainString(solvedRequest[0]['rdata']))
-            for answer in solvedRequest:
-                userRequest['answers'].append(answer)
-            # except Exception as e:
-            #     print(terminalColors.red, 'Could not resolve', terminalColors.end, getDomainString(request['URL']), 'error:', e)
-        else:
-            unsupportedType = request['qtype']
-            print(terminalColors.yellow, f'Type {unsupportedType} not supported', terminalColors.end)
-    
-    userRequest['flags']['QR'] = True
-    userRequest['ancount'] = len(userRequest['answers'])
+        debug.info('Outgoing packet', 'to ' + str(userAddress[0]))
+        print(userRequest)
+        print()
+        serverResponse = encodeRequest(userRequest)
+        sock.sendto(serverResponse, userAddress) 
+    except Exception as e:
+        debug.error('Server error', e)
 
-    print(terminalColors.blue, "[RETURN RESPONSE] (<-)", terminalColors.end, userRequest)
-    serverResponse = encodeRequest(userRequest)
 
-    sock.sendto(serverResponse, userAddress) 
+# requestObject = {
+#     #'URL': ['content-signature-2', 'cdn', 'mozilla', 'net'], 
+#     'URL': ['support', 'mozilla', 'org'],
+#     'qtype': 1, 
+#     'qclass': 1
+# }
 
-    x += 1
+# reqType = 'UNKNOWN'
+# if requestObject['qtype'] == 1:
+#     reqType = 'A'
+# elif requestObject['qtype'] == 15:
+#     reqType = 'MX'
 
+# rootSelector = 0
+# solvedRequest = resolveRequest(requestObject, rootServers[rootSelector])
+# while solvedRequest == -1:
+#     # there are 13 root servers to select from
+#     rootSelector = rootSelector % 12
+#     # we should try another root
+#     solvedRequest = resolveRequest(request, rootServers[rootSelector])
+#     # increase the root selector
+#     rootSelector += 1
+# debug.success('Resolved query', reqType + ' ' + getDomainString(requestObject['URL']) + ' to ' + getDomainString(solvedRequest[0]['rdata']), encaps=False)
 
 # refer to: https://www.cs.swarthmore.edu/~chaganti/cs43/f19/labs/lab3.html for a general workflow that is needed to implement the DNS server
 # refer to: https://www2.cs.duke.edu/courses/fall16/compsci356/DNS/DNS-primer.pdf for explained example queries
@@ -678,7 +676,7 @@ while x < 10:
 # +---------------------+
 # |        Answer       | RRs answering the question
 # +---------------------+
-# |      Authority      | RRs pointing toward an authority
+# |      Authority      | RRs pointing toward an authority 
 # +---------------------+
 # |      Additional     | RRs holding additional information
 # +---------------------+
