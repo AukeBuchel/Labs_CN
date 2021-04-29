@@ -59,6 +59,20 @@ def findResponseType(data):
     
     # add all codewords together. Specify some rules of addition
 
+
+def bytesMaker(data):
+    byteSet = []
+    # get passed some data, string format, and compute checksum
+    # pack all chars one at a time
+    for char in data:
+        byte = struct.pack('!c', char)
+        byte = int(byte, 16)
+        byteSet.append(byte)
+    print(byteSet)
+
+
+
+
 def responseHandler(data, respTyp, name):    
     if respTyp == "Hello":
         # check that the server sends us the correct name, indicating that our connection request went through without issue.
