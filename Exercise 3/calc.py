@@ -3,7 +3,7 @@ import struct
 def checkSum(sList):
     
     result = 0
-    print(sList)
+    # print(sList)
 
     for i in range(len(sList)):
         # to perform binary addition, we simply add the values from sList, convert to binary, check
@@ -15,9 +15,9 @@ def checkSum(sList):
         # else:
         #       invert all bits, return checksum.
         result += sList[i]
-    print(result)
+    # print(result)
     result = bin(result)
-    print(result)
+    # print(result)
 
     # empty our sList for next call
     sList = []
@@ -30,7 +30,7 @@ def checkSum(sList):
         num2 = int(num2, 2)
         sList.append(num1)
         sList.append(num2)
-        print(sList)
+        # print(sList)
 
         checkSum(sList)
     else:
@@ -39,11 +39,14 @@ def checkSum(sList):
         # add some zeros before to get 8 bits again
         while len(result) < 8:
             result = "0" + result
+
+        # perform one's complement
+        print(result)
         for i in range(len(result)):
-            if result[i] == 1:
-                result[i] = 0
-            elif result[i] == 0:
-                result[i] = 1
+            if result[i] == "1":
+                result = result[:i] + "0" + result[(i+1):]
+            elif result[i] == "0":
+                result = result[:i] + "1" + result[(i+1):]
         print(result)
         return result
 

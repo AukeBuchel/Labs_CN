@@ -43,34 +43,57 @@ def findResponseType(data):
     else:
         raise("Unhandled response type for this protocol.")
 
-# use struct instead, this is ugly. Map hex to binary codewords.
-# def checkSum(string):
-#     # we have to generate a bitstring from the passed string. We use this weird looking combination of functions to
-#     # generate the bitstring.
-#     bitString = ''.join(format(i, '08b') for i in bytearray(string, encoding ='utf-8'))
-#     # because we want to ensure all characters are correct, we compute the checksum on subsets of 8 bits out of the entire
-#     # bitstring.
-#     # Slice bitstring into bytes
-#     codewords = []
-#     while bitString != "":
-#         codeWord = bitString[0:7]
-#         codeWords.append(codeWord)
-#         bitString[0:7] = ""
+
+# recursive checksum function. Pass this function a list of utf-8 encoded chars and it will blow your mind
+def checkSum(sList):
     
-    # add all codewords together. Specify some rules of addition
+    result = 0
+    # print(sList)
 
+    for i in range(len(sList)):
+        # to perform binary addition, we simply add the values from sList, convert to binary, check
+        # the length.
+        # if length > 8:
+        #       cut all MSB until length is 8 (10 with the 0b prefix)
+        #       convert result to number
+        #       perform addition again (so call with new numbers recursively)
+        # else:
+        #       invert all bits, return checksum.
+        result += sList[i]
+    # print(result)
+    result = bin(result)
+    # print(result)
 
-def bytesMaker(data):
-    byteSet = []
-    # get passed some data, string format, and compute checksum
-    # pack all chars one at a time
-    for char in data:
-        byte = struct.pack('!c', char)
-        byte = int(byte, 16)
-        byteSet.append(byte)
-    print(byteSet)
+    # empty our sList for next call
+    sList = []
+    num1 = ""
+    num2 = ""
+    if len(result) > 10:
+        num1 += result[2:(len(result) - 8)]
+        num1 = int(num1, 2)
+        num2 += result[(len(result) - 8):]
+        num2 = int(num2, 2)
+        sList.append(num1)
+        sList.append(num2)
+        # print(sList)
 
+        checkSum(sList)
+    else:
+        # delete 0b prefix
+        result = result[2: : ]
+        # add some zeros before to get 8 bits again
+        while len(result) < 8:
+            result = "0" + result
 
+        # perform one's complement
+        # print(result)
+        for i in range(len(result)):
+            if result[i] == "1":
+                result = result[:i] + "0" + result[(i+1):]
+            elif result[i] == "0":
+                result = result[:i] + "1" + result[(i+1):]
+        # print(result)
+        return result
 
 
 def responseHandler(data, respTyp, name):    
