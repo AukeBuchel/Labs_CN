@@ -105,12 +105,6 @@ def decodeResourceRecord(UDPcontent, offsetByte):
     # the domain name is stored as a list of subdomains (so separated by a period (.))
     domainName = []
 
-    # print(struct.unpack_from("!B", UDPcontent, offsetByte - 2)[0])
-    # print(struct.unpack_from("!B", UDPcontent, offsetByte - 1)[0])
-    # # # print(struct.unpack_from("!B", UDPcontent, offsetByte)[0])
-    # print(struct.unpack_from("!B", UDPcontent, offsetByte + 1)[0])
-    # print(struct.unpack_from("!B", UDPcontent, offsetByte + 2)[0])
-
     if pointerFound(struct.unpack_from("!H", UDPcontent, offsetByte)[0]):
         namePointer = decodePointer(struct.unpack_from("!H", UDPcontent, offsetByte)[0])
         offsetByte += 2
@@ -190,7 +184,30 @@ def decodeResourceRecord(UDPcontent, offsetByte):
         # preference is MX-only
         preference, = struct.unpack_from("!H", UDPcontent, offsetByte)
         offsetByte += 2
-        ardata, offsetByte = decodeLabels(UDPcontent, offsetByte)
+        bytesInspected = 2
+
+        if ardlength - bytesInspected == 1 and struct.unpack_from("!B", UDPcontent, offsetByte)[0] == 0:
+            ardata = ['<root>']
+        else:
+            oldOffsetByte = offsetByte
+            ardata, offsetByte = decodeLabels(UDPcontent, offsetByte)
+            bytesInspected += (offsetByte - oldOffsetByte)
+            offsetByte -= 1
+
+            if bytesInspected < ardlength and pointerFound(struct.unpack_from("!B", UDPcontent, offsetByte)[0], 1):
+                namePointer = decodePointer(struct.unpack_from("!H", UDPcontent, offsetByte)[0])
+                offsetByte += 2
+                bytesInspected += 2
+                domainNamePart, pointerOffsetByte = decodeLabel(UDPcontent, namePointer)
+                ardata.append(domainNamePart)
+                # the domain pointed to, can itself also contain pointers, 
+                # this is not included in the rdlength so we do not change bytesInspected (see RFC 4.1.4)
+                while pointerFound(struct.unpack_from("!H", UDPcontent, pointerOffsetByte)[0]):
+                    namePointer = decodePointer(struct.unpack_from("!H", UDPcontent, pointerOffsetByte)[0])
+                    domainNamePart, pointerOffsetByte = decodeLabel(UDPcontent, namePointer)
+                    ardata.append(domainNamePart)
+                labels, pointerOffsetByte = decodeLabels(UDPcontent, pointerOffsetByte)
+                ardata += labels
 
     # we build the final resource record object for later access
     resourceRecordObject = {
@@ -205,10 +222,6 @@ def decodeResourceRecord(UDPcontent, offsetByte):
 
     if atype == 15:
         resourceRecordObject['preference'] = preference
-
-    print(f'Finished at byte {offsetByte}')
-    print(struct.unpack_from("!B", UDPcontent, offsetByte - 2)[0])
-    print(struct.unpack_from("!B", UDPcontent, offsetByte - 1)[0])
 
     return resourceRecordObject, offsetByte
 
@@ -402,6 +415,11 @@ def encodeRequest(requestObject):
         currentByte += 4
         exportBytes += struct.pack("!I", answer['ttl'])
         currentByte += 4
+
+        # if type = MX (15), two bytes are added. They supply the 'preference'
+        if answer['type'] == 15:
+            answer['rdlength'] += 2
+
         exportBytes += struct.pack("!H", answer['rdlength'])
         currentByte += 2
 
@@ -414,6 +432,10 @@ def encodeRequest(requestObject):
                 preference = answer['preference']
             exportBytes += struct.pack("!H", preference)
             currentByte += 2
+            # special case where pointed to <root>, this is represented with a 0x0 byte so we represent it with this
+            if '<root>' in answer['rdata']:
+                answer['rdata'].pop('root')
+                answer['rdata'].append(0)
 
         # append the rdata
         for dataItem in answer['rdata']:
@@ -422,7 +444,7 @@ def encodeRequest(requestObject):
     return exportBytes
 
 # program flow:
-# 1. request a domain to a root DNS server (from txt file, todo)
+# 1. request a domain to a root DNS server
 #   - if no response (timeout) -> try another root DNS
 # 2. decode the answer, it contains the TLD nameservers in additional sec
 # 3. request the domain to the TLD DNS server (from step 2)
@@ -534,6 +556,8 @@ def resolveRequest(domainRequestObject, DNSip, indent = ''):
         if debugOn:
             debug.success('Answer found', getDomainString(DNSresponse['answers'][0]['rdata']), indent=indent, encaps=False)
         for answer in DNSresponse['answers']:
+            # for testing if cache gets emptied
+            # answer['ttl'] = 5
             simpleCache[getDomainString(answer['URL'])] = answer
             if answer['type'] == 5:
                 requestObject = {
