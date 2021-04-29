@@ -1,22 +1,8 @@
 import socket
 import struct  # byte ordering
-import random
-
-# ============= USED IN PROD =========================
-# # setup the local server (UDP/53)
-# sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-# host = ("192.168.0.215", 53)
-# sock.bind(host)
-
-# # data is the received data (dynamic?)
-# # addr is a tuple that we need to use with .sendto(<newdata>, <addrTuple>)
-# while True:
-#     data, addr = sock.recvfrom(4096)
-#     print(addr)
-#     print(data)
-#     sock.sendto("ELIAS-RESPONSE-DNS".encode("utf-8"), addr)
-# #sock.sendto("yoooo".encode("utf-8"), addr)
-# =====================================================
+import random # packet IDs
+import threading # cache maintenance
+import time # also for the cache
 
 class terminalColors:
     blue = '\033[94m'
@@ -119,6 +105,12 @@ def decodeResourceRecord(UDPcontent, offsetByte):
     # the domain name is stored as a list of subdomains (so separated by a period (.))
     domainName = []
 
+    # print(struct.unpack_from("!B", UDPcontent, offsetByte - 2)[0])
+    # print(struct.unpack_from("!B", UDPcontent, offsetByte - 1)[0])
+    # # # print(struct.unpack_from("!B", UDPcontent, offsetByte)[0])
+    # print(struct.unpack_from("!B", UDPcontent, offsetByte + 1)[0])
+    # print(struct.unpack_from("!B", UDPcontent, offsetByte + 2)[0])
+
     if pointerFound(struct.unpack_from("!H", UDPcontent, offsetByte)[0]):
         namePointer = decodePointer(struct.unpack_from("!H", UDPcontent, offsetByte)[0])
         offsetByte += 2
@@ -200,10 +192,6 @@ def decodeResourceRecord(UDPcontent, offsetByte):
         offsetByte += 2
         ardata, offsetByte = decodeLabels(UDPcontent, offsetByte)
 
-
-    # ['google', 'com']
-    # -> google.com
-
     # we build the final resource record object for later access
     resourceRecordObject = {
         'URL': domainName,
@@ -217,6 +205,10 @@ def decodeResourceRecord(UDPcontent, offsetByte):
 
     if atype == 15:
         resourceRecordObject['preference'] = preference
+
+    print(f'Finished at byte {offsetByte}')
+    print(struct.unpack_from("!B", UDPcontent, offsetByte - 2)[0])
+    print(struct.unpack_from("!B", UDPcontent, offsetByte - 1)[0])
 
     return resourceRecordObject, offsetByte
 
@@ -444,6 +436,33 @@ sock.bind(host)
 # map domains to IP addresses
 simpleCache = {}
 
+def getCacheItem(requestObject, cacheObject):
+    if getDomainString(requestObject['URL']) not in cacheObject:
+        return -1
+    else:
+        cacheItem = cacheObject[getDomainString(requestObject['URL'])]
+        if cacheItem['type'] == requestObject['qtype'] and cacheItem['class'] == requestObject['qclass']:
+            return cacheItem
+        else:
+            return -1
+
+# this should run on a separate thread, objects are passed by reference
+def maintainCache(cacheObject):
+    while True:
+        # the list of items to remove because TTL <= 0
+        toRemove = []
+        for domain, cacheItem in cacheObject.items():
+            if cacheItem['ttl'] <= 0:
+                toRemove.append(domain)
+            else:
+                cacheItem['ttl'] -= 1
+        for domainToRemove in toRemove:
+            cacheObject.pop(domainToRemove)
+        
+        # ttl is in seconds so we wait one second
+        time.sleep(1)
+
+
 rootServers = ['198.41.0.4', '199.9.14.201', '192.33.4.12', '199.7.91.13', '192.203.230.10', '192.5.5.241', '192.112.36.4', '198.97.190.53', '192.36.148.17', '192.58.128.30', '193.0.14.129', '199.7.83.42', '202.12.27.33' ]
 
 debugOn = True
@@ -500,13 +519,22 @@ def resolveRequest(domainRequestObject, DNSip, indent = ''):
 
     if DNSresponse['flags']['RCODE'] == 3:
         if debugOn:
-            debug.warning('No such name', 'Requested domain does not have an IP', indent=indent, encaps=False)
+            debug.warning('No such name', 'requested domain does not have an IP', indent=indent, encaps=False)
         return -2
+    
+    cacheResult = getCacheItem(domainRequestObject, simpleCache)
+    if cacheResult != -1:
+        if debugOn:
+            debug.success('Cached answer', getDomainString(cacheResult['rdata']), indent=indent, encaps=False)
+        answerList = []
+        answerList.append(cacheResult)
+        return answerList
 
     if DNSresponse['ancount'] > 0:
         if debugOn:
             debug.success('Answer found', getDomainString(DNSresponse['answers'][0]['rdata']), indent=indent, encaps=False)
         for answer in DNSresponse['answers']:
+            simpleCache[getDomainString(answer['URL'])] = answer
             if answer['type'] == 5:
                 requestObject = {
                     'URL': answer['rdata'], 
@@ -514,6 +542,7 @@ def resolveRequest(domainRequestObject, DNSip, indent = ''):
                     'qclass': 1
                 }
                 return resolveRequest(requestObject, rootServers[0], indent + '\t')
+            # add the item to the cache
         return DNSresponse['answers']
     else:
         # create a mapping of nameservers (domains) and their IPs
@@ -579,85 +608,128 @@ def resolveRequest(domainRequestObject, DNSip, indent = ''):
                         if responseObject != -1 and responseObject != None:
                             return responseObject
 
-while True:
-    try:
-        # always 512 bytes
-        userRequest, userAddress = sock.recvfrom(512)
-        debug.info('Incoming packet', 'from ' + str(userAddress[0]))
-        userRequest = decodeRequest(userRequest, False)
+def runServer():
+    while True:
+        try:
+            # always 512 bytes
+            userRequest, userAddress = sock.recvfrom(512)
+            debug.info('Incoming packet', 'from ' + str(userAddress[0]))
+            userRequest = decodeRequest(userRequest, False)
 
-        # we do not want responses so we let this slide
-        if (userRequest['flags']['QR']):
-            debug.warning('No request', 'this packet is dropped since it was a response', encaps=False)
-            continue
+            # we do not want responses so we let this slide
+            if (userRequest['flags']['QR']):
+                debug.warning('No request', 'this packet is dropped since it was a response', encaps=False)
+                continue
 
-        for request in userRequest['requests']:
-            # we can only resolve type 1 (A) and type 15 (MX) records
-            if (request['qtype'] == 1 or request['qtype'] == 15):
-                reqType = 'UNKNOWN'
-                if request['qtype'] == 1:
-                    reqType = 'A'
-                elif request['qtype'] == 15:
-                    reqType = 'MX'
-                debug.neutral('Resolving query', reqType + ' ' + getDomainString(request['URL']), encaps=False)
-                try:
-                    rootSelector = 0
-                    solvedRequest = resolveRequest(request, rootServers[rootSelector])
-                    while solvedRequest == -1 or solvedRequest == None:
-                        # there are 13 root servers to select from
-                        rootSelector = rootSelector % 12
-                        # we should try another root
+            for request in userRequest['requests']:
+                # we can only resolve type 1 (A) and type 15 (MX) records
+                if (request['qtype'] == 1 or request['qtype'] == 15):
+                    reqType = 'UNKNOWN'
+                    if request['qtype'] == 1:
+                        reqType = 'A'
+                    elif request['qtype'] == 15:
+                        reqType = 'MX'
+                    debug.neutral('Resolving query', reqType + ' ' + getDomainString(request['URL']), encaps=False)
+                    try:
+                        rootSelector = 0
                         solvedRequest = resolveRequest(request, rootServers[rootSelector])
-                        # increase the root selector
-                        rootSelector += 1
-                    if solvedRequest == -2:
-                        # we set the RCODE flag for the response we send to the user, 3 is NO SUCH NAME
-                        userRequest['flags']['RCODE'] = 3
-                        debug.success('Resolved query', reqType + ' ' + getDomainString(request['URL']) + ' NO SUCH NAME', encaps=False)
-                    else:
-                        debug.success('Resolved query', reqType + ' ' + getDomainString(request['URL']) + ' to ' + getDomainString(solvedRequest[0]['rdata']), encaps=False)
-                        for answer in solvedRequest:
-                            userRequest['answers'].append(answer)
-                except Exception as e:
-                    debug.error('Query resolving error', e, encaps=False)
-            else:
-                debug.warning('Unsupported query', 'query type ' + str(request['qtype']), encaps=False)
-        
-        userRequest['flags']['QR'] = True
-        userRequest['ancount'] = len(userRequest['answers'])
+                        while solvedRequest == -1 or solvedRequest == None:
+                            # there are 13 root servers to select from
+                            rootSelector = rootSelector % 12
+                            # we should try another root
+                            solvedRequest = resolveRequest(request, rootServers[rootSelector])
+                            # increase the root selector
+                            rootSelector += 1
+                        if solvedRequest == -2:
+                            # we set the RCODE flag for the response we send to the user, 3 is NO SUCH NAME
+                            userRequest['flags']['RCODE'] = 3
+                            debug.success('Resolved query', reqType + ' ' + getDomainString(request['URL']) + ' NO SUCH NAME', encaps=False)
+                        else:
+                            debug.success('Resolved query', reqType + ' ' + getDomainString(request['URL']) + ' to ' + getDomainString(solvedRequest[0]['rdata']), encaps=False)
+                            for answer in solvedRequest:
+                                userRequest['answers'].append(answer)
+                    except Exception as e:
+                        debug.error('Query resolving error', e, encaps=False)
+                else:
+                    debug.warning('Unsupported query', 'query type ' + str(request['qtype']), encaps=False)
+            
+            userRequest['flags']['QR'] = True
+            userRequest['ancount'] = len(userRequest['answers'])
 
-        debug.info('Outgoing packet', 'to ' + str(userAddress[0]))
-        print(userRequest)
+            debug.info('Outgoing packet', 'to ' + str(userAddress[0]))
+            print(userRequest)
+            print()
+            serverResponse = encodeRequest(userRequest)
+            sock.sendto(serverResponse, userAddress) 
+        except socket.timeout:
+            pass
+        except Exception as e:
+            debug.error('Server error', e)
+
+def runInterface():
+    while True:
+        print("Which domain to lookup? (A example.com))")
+        inputDomain = input('> ')
+        inputDomain = inputDomain.split()
+        selectedType = 1
+        if inputDomain[0] == 'MX':
+            selectedType = 15
+
+        requestObject = {
+            #'URL': ['content-signature-2', 'cdn', 'mozilla', 'net'], 
+            'URL': getDomainList(inputDomain[1]),
+            'qtype': selectedType, 
+            'qclass': 1
+        }
+
+        reqType = 'UNKNOWN'
+        if requestObject['qtype'] == 1:
+            reqType = 'A'
+        elif requestObject['qtype'] == 15:
+            reqType = 'MX'
+
+        rootSelector = 0
+        solvedRequest = resolveRequest(requestObject, rootServers[rootSelector])
+        while solvedRequest == -1:
+            # there are 13 root servers to select from
+            rootSelector = rootSelector % 12
+            # we should try another root
+            solvedRequest = resolveRequest(request, rootServers[rootSelector])
+            # increase the root selector
+            rootSelector += 1
+        if solvedRequest == -2:
+            debug.success('Resolved query', reqType + ' ' + getDomainString(requestObject['URL']) + ' NO SUCH NAME', encaps=False)
+        else:
+            debug.success('Resolved query', reqType + ' ' + getDomainString(requestObject['URL']) + ' to ' + getDomainString(solvedRequest[0]['rdata']), encaps=False)
         print()
-        serverResponse = encodeRequest(userRequest)
-        sock.sendto(serverResponse, userAddress) 
-    except Exception as e:
-        debug.error('Server error', e)
 
+cacheThread = threading.Thread(target=maintainCache, args=(simpleCache,))
+serverThread = threading.Thread(target=runServer)
+interfaceThread = threading.Thread(target=runInterface)
 
-# requestObject = {
-#     #'URL': ['content-signature-2', 'cdn', 'mozilla', 'net'], 
-#     'URL': ['support', 'mozilla', 'org'],
-#     'qtype': 1, 
-#     'qclass': 1
-# }
+debug.info("Welcome", 'this is the CN-2021 DIY DNS server from Auke Buchel and Elias Groot (lab group 26)\nWhat do you want to do?', encaps=False)
+print("\n\t[1] run the DNS server on this machine\n\t[2] interface the DNS server\n")
 
-# reqType = 'UNKNOWN'
-# if requestObject['qtype'] == 1:
-#     reqType = 'A'
-# elif requestObject['qtype'] == 15:
-#     reqType = 'MX'
+# of course this is not safe nor error-protected but it is about the DNS, not our interface
+startSelection = int(input('> '))
 
-# rootSelector = 0
-# solvedRequest = resolveRequest(requestObject, rootServers[rootSelector])
-# while solvedRequest == -1:
-#     # there are 13 root servers to select from
-#     rootSelector = rootSelector % 12
-#     # we should try another root
-#     solvedRequest = resolveRequest(request, rootServers[rootSelector])
-#     # increase the root selector
-#     rootSelector += 1
-# debug.success('Resolved query', reqType + ' ' + getDomainString(requestObject['URL']) + ' to ' + getDomainString(solvedRequest[0]['rdata']), encaps=False)
+print('\nDo you want to show debug messages? (y/n)')
+debugSelection = input('> ')
+if debugSelection == 'y':
+    debugOn = True
+    print('Debug messages shown\n')
+else:
+    debugOn = False
+    print('Debug messages disabled\n')
+
+if startSelection == 1:
+    debug.info('Running server', 'on ' + host[0] + ' (over UDP)')
+    serverThread.start()
+else:
+    interfaceThread.start()
+
+# whatever is chosen, cache is always maintained
+cacheThread.start()
 
 # refer to: https://www.cs.swarthmore.edu/~chaganti/cs43/f19/labs/lab3.html for a general workflow that is needed to implement the DNS server
 # refer to: https://www2.cs.duke.edu/courses/fall16/compsci356/DNS/DNS-primer.pdf for explained example queries
