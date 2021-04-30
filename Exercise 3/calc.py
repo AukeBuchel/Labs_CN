@@ -1,7 +1,7 @@
 import struct
 
 def checkSum(sList):
-    
+
     result = 0
     # print(sList)
 
@@ -41,7 +41,7 @@ def checkSum(sList):
             result = "0" + result
 
         # perform one's complement
-        print(result)
+        # print(result)
         for i in range(len(result)):
             if result[i] == "1":
                 result = result[:i] + "0" + result[(i+1):]
@@ -51,10 +51,12 @@ def checkSum(sList):
         return result
 
 
-
+# def checkCheck(msg, checkSum):
+#     # pass this a message in string form to check 
 
 
 data = "Hello"
 data = data.encode("utf-8")
 dataList = list(data)
+# print(dataList)
 checkSum(dataList)

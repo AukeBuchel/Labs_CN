@@ -173,7 +173,6 @@ def responseHandler(data, respTyp, name):
         print(terminalColors.green + "[" + setting + "] " + terminalColors.end + value)
     elif respTyp == "Set":
         print(terminalColors.green + "[SET-OK]" + terminalColors.end)
-
     else:
         raise("Message could not be handled")
 
@@ -204,6 +203,7 @@ def chatInputLoop(sock, userActive, sequenceNr):
                 sendString += " " + word
 
             sendString = sendString + " SEQ "+ str(sequenceNr[0]) + " "
+            # checksum should be computed here and appended to the message before \n
             sendString += "\n"
             sendString = sendString.encode("utf-8")
             

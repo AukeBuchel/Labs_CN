@@ -451,7 +451,7 @@ def encodeRequest(requestObject):
 #   - if no response (timeout) -> try another TLD nameserver
 # *. decode the answer, if no answers yet keep repeating this: traverse the tree
 
-host = ("192.168.1.202", 53)
+host = ("192.168.178.207", 53)
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(host)
 
