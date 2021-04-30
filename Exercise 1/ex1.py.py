@@ -3,7 +3,6 @@ import time
 import threading
 
 
-
 def cleanString(string):
     string = string.strip()
     string = string.replace("\n", '')
@@ -145,8 +144,13 @@ while nameOk == False:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     # connect to our server on a port that nobody is listening to currently
+<<<<<<< Updated upstream
     # host = ("3.121.226.198", 5378)
     host = ("127.0.0.1", 5379)
+=======
+    #host = ("3.121.226.198", 5378)
+    host = ("localhost", 5379)
+>>>>>>> Stashed changes
     sock.connect(host)
 
     # enter a name
