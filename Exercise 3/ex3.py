@@ -2,6 +2,7 @@ import socket
 import time
 import threading
 import struct
+import copy
 
 # makeup colours
 class terminalColors:
@@ -44,13 +45,11 @@ def findResponseType(data):
         raise("Unhandled response type for this protocol.")
 
 
-# recursive checksum function. Pass this function a list of utf-8 encoded chars and it will blow your mind
+# recursive checksum function. Pass this function a list of utf-8 encoded chars and it will blow your mind (only pass message body and seq nr)
 def checkSum(sList):
-    
+    # pass this function only the message and sequence number part of the message.
     result = 0
     # print(sList)
-
-    for i in range(len(sList)):
         # to perform binary addition, we simply add the values from sList, convert to binary, check
         # the length.
         # if length > 8:
@@ -59,6 +58,7 @@ def checkSum(sList):
         #       perform addition again (so call with new numbers recursively)
         # else:
         #       invert all bits, return checksum.
+    for i in range(len(sList)):
         result += sList[i]
     # print(result)
     result = bin(result)
@@ -76,8 +76,7 @@ def checkSum(sList):
         sList.append(num1)
         sList.append(num2)
         # print(sList)
-
-        checkSum(sList)
+        return checkSum(sList)
     else:
         # delete 0b prefix
         result = result[2: : ]
@@ -92,9 +91,69 @@ def checkSum(sList):
                 result = result[:i] + "0" + result[(i+1):]
             elif result[i] == "0":
                 result = result[:i] + "1" + result[(i+1):]
-        # print(result)
+        # result = result[:0] + "0b" + result[1:]
+        # result = int(result, 2)
+        # print((result))
+        # print(type(result))
         return result
 
+def checkCheck(msg, checkBits):
+    # pass this a message in encoded string form to check 
+    # convert all chars to binary, we get them in utf8 encoded, so making a list out of them should give us the individual byte objects.
+    msgList = list(msg)
+    intList = []
+    MSGindex = -3
+    totalSum = 0
+    
+    # now contains a list of integers, simple byte representations of the chars in the message.
+    # compare checksum over DELIVERY <source> <message> SEQ <seqnr> <\n>
+    # but this will be different from our original checksum, so we must delete the "DELIVERY <source> part"
+    # our incoming message includes " MSG " which starts our message field. We skip all that comes before this in our checksum and
+    # in our list, "MSG " will appear as the sequence [77, 83, 71]. If we find this, we know where to start our checksum calculation from. If we do not, we can discard
+    # the message by default.
+    for i in range(len(msgList)):
+        if msgList[i] == 77 and msg[i+1] == 83 and msg[i+2] == 71:
+            MSGindex = i
+    # now add all binary values of all characters to get the checksum
+    # checkBits = int(checkBits, 2)
+
+
+    # print(checkSum)
+    for i in range((MSGindex + 3), len(msgList)):
+        totalSum += msgList[i]
+    # now we need to again perform carry addition. only if we end up with 11111111 is the message correct and should it be accepted.
+    totalSum = bin(totalSum)
+    # delete 0b prefix
+    totalSum = totalSum[2: : ]
+
+    while len(totalSum) < 8:
+        totalSum = "0" + totalSum
+    if len(totalSum) > 8:
+        num1 = totalSum[0:(len(totalSum) - 8)]
+        num1 = int(num1, 2)
+        num2 = totalSum[(len(totalSum) -8):]
+        num2 = int(num2, 2)
+        intList.append(num1)
+        intList.append(num2)
+        myCheckbits = checkSum(intList)
+
+        print(checkBits)
+        print(myCheckbits)
+
+        if checkBits == myCheckbits:
+            return True
+        else:
+            return False
+    elif len(totalSum) == 8:
+        myCheckBits = totalSum
+
+        print(checkBits)
+        print(myCheckbits)
+
+        if checkBits == myCheckbits:
+            return True
+        else:
+            return False
 
 def responseHandler(data, respTyp, name):    
     if respTyp == "Hello":
@@ -197,13 +256,30 @@ def chatInputLoop(sock, userActive, sequenceNr):
             # item 0 is the receiver of our message
             sendString = "SEND " + inputData[0]
             inputData.pop(0)
+            
+            # for our checksum checker, add a start flag for our message field
+            sendString += " MSG "
+            checkSumString = ""
 
             # we restore the words in the sentence to a normal string
             for word in inputData:
                 sendString += " " + word
+                checkSumString += word + " "
 
-            sendString = sendString + " SEQ "+ str(sequenceNr[0]) + " "
             # checksum should be computed here and appended to the message before \n
+            # calculate checksum
+            # checksum is calculated over SEND <destination> <message> SEQ <seqnr> \n
+            # make sure this doesn't happen, only calculate checksum for our message, seqnr. Do this by calling checksum with a string containing only these parts.
+            sendString = sendString + " SEQ "+ str(sequenceNr[0]) + " "
+            checkSumString = checkSumString + "SEQ " + str(sequenceNr[0])
+            checkSumString = checkSumString.encode("utf-8")
+            checkSumList = list(checkSumString)
+            print(checkSumList)
+            checkBits = ""
+            checkBits = checkSum(checkSumList)
+            print(checkBits)
+            sendString = sendString + checkBits
+            
             sendString += "\n"
             sendString = sendString.encode("utf-8")
             
@@ -260,6 +336,8 @@ def chatReceiverLoop(sock, userActive):
         # while "\n" not in recievedData and userActive[0] == True:
         try:
             data, addr = sock.recvfrom(65565)
+            # deepcopy of data so that we can pass this to our checksum checker later on before it is converted.
+            checkSumString = copy.deepcopy(data)
             recievedData += data.decode("utf-8")
             recievedAddr = addr
 
