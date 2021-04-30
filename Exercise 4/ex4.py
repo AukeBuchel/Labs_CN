@@ -3,6 +3,7 @@ import struct  # byte ordering
 import random # packet IDs
 import threading # cache maintenance
 import time # also for the cache
+from datetime import datetime # advanced cache
 
 class terminalColors:
     blue = '\033[94m'
@@ -451,7 +452,7 @@ def encodeRequest(requestObject):
 #   - if no response (timeout) -> try another TLD nameserver
 # *. decode the answer, if no answers yet keep repeating this: traverse the tree
 
-host = ("192.168.178.207", 53)
+host = ("192.168.1.202", 53)
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(host)
 
@@ -463,26 +464,34 @@ def getCacheItem(requestObject, cacheObject):
         return -1
     else:
         cacheItem = cacheObject[getDomainString(requestObject['URL'])]
-        if cacheItem['type'] == requestObject['qtype'] and cacheItem['class'] == requestObject['qclass']:
-            return cacheItem
+        timeInCache = (datetime.now()-cacheItem['cachedAt']).total_seconds()
+        # the item is still valid
+        if timeInCache <= cacheItem['ttl']:
+            if cacheItem['type'] == requestObject['qtype'] and cacheItem['class'] == requestObject['qclass']:
+                return cacheItem
+            else:
+                return -1
+        # the TTL run out
         else:
+            # we remove the item from the cache
+            cacheObject.pop(getDomainString(requestObject['URL']))
             return -1
 
-# this should run on a separate thread, objects are passed by reference
-def maintainCache(cacheObject):
-    while True:
-        # the list of items to remove because TTL <= 0
-        toRemove = []
-        for domain, cacheItem in cacheObject.items():
-            if cacheItem['ttl'] <= 0:
-                toRemove.append(domain)
-            else:
-                cacheItem['ttl'] -= 1
-        for domainToRemove in toRemove:
-            cacheObject.pop(domainToRemove)
+# # this should run on a separate thread, objects are passed by reference
+# def maintainCache(cacheObject):
+#     while True:
+#         # the list of items to remove because TTL <= 0
+#         toRemove = []
+#         for domain, cacheItem in cacheObject.items():
+#             if cacheItem['ttl'] <= 0:
+#                 toRemove.append(domain)
+#             else:
+#                 cacheItem['ttl'] -= 1
+#         for domainToRemove in toRemove:
+#             cacheObject.pop(domainToRemove)
         
-        # ttl is in seconds so we wait one second
-        time.sleep(1)
+#         # ttl is in seconds so we wait one second
+#         time.sleep(1)
 
 
 rootServers = ['198.41.0.4', '199.9.14.201', '192.33.4.12', '199.7.91.13', '192.203.230.10', '192.5.5.241', '192.112.36.4', '198.97.190.53', '192.36.148.17', '192.58.128.30', '193.0.14.129', '199.7.83.42', '202.12.27.33' ]
@@ -558,6 +567,7 @@ def resolveRequest(domainRequestObject, DNSip, indent = ''):
         for answer in DNSresponse['answers']:
             # for testing if cache gets emptied
             # answer['ttl'] = 5
+            answer['cachedAt'] = datetime.now()
             simpleCache[getDomainString(answer['URL'])] = answer
             if answer['type'] == 5:
                 requestObject = {
@@ -727,7 +737,7 @@ def runInterface():
             debug.success('Resolved query', reqType + ' ' + getDomainString(requestObject['URL']) + ' to ' + getDomainString(solvedRequest[0]['rdata']), encaps=False)
         print()
 
-cacheThread = threading.Thread(target=maintainCache, args=(simpleCache,))
+
 serverThread = threading.Thread(target=runServer)
 interfaceThread = threading.Thread(target=runInterface)
 
@@ -752,8 +762,9 @@ if startSelection == 1:
 else:
     interfaceThread.start()
 
-# whatever is chosen, cache is always maintained
-cacheThread.start()
+# whatever is chosen, cache is always maintained (not anymore, we have a better cache now)
+# cacheThread = threading.Thread(target=maintainCache, args=(simpleCache,))
+# cacheThread.start()
 
 # refer to: https://www.cs.swarthmore.edu/~chaganti/cs43/f19/labs/lab3.html for a general workflow that is needed to implement the DNS server
 # refer to: https://www2.cs.duke.edu/courses/fall16/compsci356/DNS/DNS-primer.pdf for explained example queries
