@@ -100,9 +100,11 @@ def checkSum(sList):
 def checkCheck(msg, checkBits):
     # pass this a message in encoded string form to check 
     # convert all chars to binary, we get them in utf8 encoded, so making a list out of them should give us the individual byte objects.
+    checkBits = checkBits.decode("utf-8")
     msgList = list(msg)
     intList = []
-    MSGindex = -3
+    # MSGindex = -3
+    # checkSumIndex = -2
     totalSum = 0
     
     # now contains a list of integers, simple byte representations of the chars in the message.
@@ -111,16 +113,22 @@ def checkCheck(msg, checkBits):
     # our incoming message includes " MSG " which starts our message field. We skip all that comes before this in our checksum and
     # in our list, "MSG " will appear as the sequence [77, 83, 71]. If we find this, we know where to start our checksum calculation from. If we do not, we can discard
     # the message by default.
-    for i in range(len(msgList)):
-        if msgList[i] == 77 and msg[i+1] == 83 and msg[i+2] == 71:
-            MSGindex = i
+    # for i in range(len(msgList)):
+    #     if msgList[i] == 77 and msg[i+1] == 83 and msg[i+2] == 71:
+    #         MSGindex = i
+    # # check for CHECKSUM string as after this is where our checksum shoud stop being calculated
+    # for i in range(len(msgList)):
+    #     if msgList[i] == 67 and msgList[i+1] == 72 and msgList[i+2] == 69 and msgList[i+3] == 67 and msgList[i+4] == 75 and msgList[i+5] == 83 and msgList[i+6] == 85 and msgList[i+7] == 77:
+    #         checkSumIndex = i
     # now add all binary values of all characters to get the checksum
     # checkBits = int(checkBits, 2)
-
+    
+    for num in range(0, len(msgList)):
+        totalSum += msgList[num]
 
     # print(checkSum)
-    for i in range((MSGindex + 3), len(msgList)):
-        totalSum += msgList[i]
+    # for i in range((MSGindex + 3), (checkSumIndex + 8)):
+    #     totalSum += msgList[i]
     # now we need to again perform carry addition. only if we end up with 11111111 is the message correct and should it be accepted.
     totalSum = bin(totalSum)
     # delete 0b prefix
@@ -128,6 +136,7 @@ def checkCheck(msg, checkBits):
 
     while len(totalSum) < 8:
         totalSum = "0" + totalSum
+
     if len(totalSum) > 8:
         num1 = totalSum[0:(len(totalSum) - 8)]
         num1 = int(num1, 2)
@@ -137,18 +146,18 @@ def checkCheck(msg, checkBits):
         intList.append(num2)
         myCheckbits = checkSum(intList)
 
-        print(checkBits)
-        print(myCheckbits)
+        # print(checkBits)
+        # print(myCheckbits)
 
         if checkBits == myCheckbits:
             return True
         else:
             return False
     elif len(totalSum) == 8:
-        myCheckBits = totalSum
+        myCheckbits = totalSum
 
-        print(checkBits)
-        print(myCheckbits)
+        # print(checkBits)
+        # print(myCheckbits)
 
         if checkBits == myCheckbits:
             return True
@@ -214,6 +223,13 @@ def responseHandler(data, respTyp, name):
         data = data.replace(seqNr, "")
         data = data.replace(" SEQ ", "")
 
+        # delete MSG header
+        data = data.replace("MSG ", "")
+
+        # delete checksum header and checksum
+        checkSumIndex = data.find("CHECKSUM")
+        data = data[:checkSumIndex]
+
         data = data.replace("DELIVERY", "").split()
         sender = data[0]
         data.pop(0)
@@ -274,10 +290,8 @@ def chatInputLoop(sock, userActive, sequenceNr):
             checkSumString = checkSumString + "SEQ " + str(sequenceNr[0]) + "CHECKSUM "
             checkSumString = checkSumString.encode("utf-8")
             checkSumList = list(checkSumString)
-            print(checkSumList)
             checkBits = ""
             checkBits = checkSum(checkSumList)
-            print(checkBits)
             sendString = sendString + "CHECKSUM " + checkBits
             
             sendString += "\n"
@@ -342,30 +356,6 @@ def chatReceiverLoop(sock, userActive):
             recievedData += data.decode("utf-8")
             recievedAddr = addr
 
-            # # check checksum here, so that we know that only correct messages pass on to the next check for sequence number.
-            # if the message contained errors before, we dont mind recieving it again in hopes of it being correct this time.
-            # Only if the message contains no bitflips (that we know of) do we proceed to the next check: sequence numbers, where
-            # we try to deal with transfer delay.
-
-            # calculate checksum for the message we recieved
-            # find MSG string and only check from there
-            msgStartIndex = recievedData.find("MSG")
-            checkSumIndex = recievedData.find("CHECKSUM")
-            # if msgStartIndex == -1:
-            #     # message body could not be found, this is either not a user message or the message was corrupted.
-            #     # could be problematic since server responsed don't include this by default.
-            #     continue
-            
-            # our checksum doesn't cover the sender or the header as sent by the server, as this is part of the protocol on the server
-            # side that we cannot alter. Too bad.
-            # Checksum was calculated over MSG <message> SEQ <seqnr> CHECKSUM .
-            # Make sure we only check over this range as well.
-            checkSumString = checkSumString[msgStartIndex:]
-
-            print(checkSumString)
-            checkSumString = list(checkSumString)
-            checkSumBits = checkSum(checkSumString)
-            print(checkSumBits)
 
             # The following code checks the checksum and sequence number. If we were able to recieve this from the server 
             # in the format that we wanted, we could do this cleaner. As it stands, we can only implement such checks in 
@@ -377,6 +367,36 @@ def chatReceiverLoop(sock, userActive):
             # this if statement makes sure we only apply our checks to user-user messages.
             tempResCheck = findResponseType(recievedData)
             if tempResCheck == "NewMsg":
+                
+                # check checksum here, so that we know that only correct messages pass on to the next check for sequence number.
+                # if the message contained errors before, we dont mind recieving it again in hopes of it being correct this time.
+                # Only if the message contains no bitflips (that we know of) do we proceed to the next check: sequence numbers, where
+                # we try to deal with transfer delay.
+
+                # calculate checksum for the message we recieved
+                # find MSG string and only check from there
+                msgStartIndex = recievedData.find("MSG")
+                checkSumIndex = recievedData.find("CHECKSUM")
+
+                # if msgStartIndex == -1:
+                #     # message body could not be found, this is either not a user message or the message was corrupted.
+                #     # could be problematic since server responsed don't include this by default.
+                #     continue
+                
+                # our checksum doesn't cover the sender or the header as sent by the server, as this is part of the protocol on the server
+                # side that we cannot alter. Too bad.
+                # Checksum was calculated over MSG <message> SEQ <seqnr> CHECKSUM .
+                # Make sure we only check over this range as well.
+                senderCheckSum = checkSumString[(checkSumIndex + 9):(checkSumIndex + 17)]
+                checkSumString = checkSumString[msgStartIndex:(checkSumIndex + 8)]
+
+                noErrors = checkCheck(checkSumString, senderCheckSum)
+                print(noErrors)
+
+                # send back acknowledgement message
+                if noErrors == True:
+
+                
 
                 # Here we check the data for the sequence number. First we look for the sequence "~SEQ~" which we append before
                 # the sequence number every time we send. If the sequence number is the same as one we already had, or lower, or more
