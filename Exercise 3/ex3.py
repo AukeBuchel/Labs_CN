@@ -14,7 +14,7 @@ class terminalColors:
         bold = '\033[1m'
 
 def cleanString(string):
-    string = string.strip()
+    # string = string.strip()
     string = string.replace("\n", '')
     return string
 
@@ -259,32 +259,33 @@ def chatInputLoop(sock, userActive, sequenceNr):
             
             # for our checksum checker, add a start flag for our message field
             sendString += " MSG "
-            checkSumString = ""
+            checkSumString = "MSG "
 
             # we restore the words in the sentence to a normal string
             for word in inputData:
-                sendString += " " + word
+                sendString += word + " " 
                 checkSumString += word + " "
 
             # checksum should be computed here and appended to the message before \n
             # calculate checksum
-            # checksum is calculated over SEND <destination> <message> SEQ <seqnr> \n
+            # checksum is calculated over MSG <message> SEQ <seqnr> CHECKSUM 
             # make sure this doesn't happen, only calculate checksum for our message, seqnr. Do this by calling checksum with a string containing only these parts.
-            sendString = sendString + " SEQ "+ str(sequenceNr[0]) + " "
-            checkSumString = checkSumString + "SEQ " + str(sequenceNr[0])
+            sendString = sendString + "SEQ "+ str(sequenceNr[0]) + " "
+            checkSumString = checkSumString + "SEQ " + str(sequenceNr[0]) + "CHECKSUM "
             checkSumString = checkSumString.encode("utf-8")
             checkSumList = list(checkSumString)
             print(checkSumList)
             checkBits = ""
             checkBits = checkSum(checkSumList)
             print(checkBits)
-            sendString = sendString + checkBits
+            sendString = sendString + "CHECKSUM " + checkBits
             
             sendString += "\n"
             sendString = sendString.encode("utf-8")
             
             # sendString = sendString.encode("utf-8")
             # we do have to reset the acknowledgement bool every time we send or we will never enter our loop again :)
+            # this bool tells us if the message was acknowledged or not.
             userActive[1] = False
             # sock.sendto(sendString.encode("utf-8"), host)
             # now we have to somehow make sure our message is sent properly, otherwise, the client should try again until it gets confirmation.
@@ -341,6 +342,31 @@ def chatReceiverLoop(sock, userActive):
             recievedData += data.decode("utf-8")
             recievedAddr = addr
 
+            # # check checksum here, so that we know that only correct messages pass on to the next check for sequence number.
+            # if the message contained errors before, we dont mind recieving it again in hopes of it being correct this time.
+            # Only if the message contains no bitflips (that we know of) do we proceed to the next check: sequence numbers, where
+            # we try to deal with transfer delay.
+
+            # calculate checksum for the message we recieved
+            # find MSG string and only check from there
+            msgStartIndex = recievedData.find("MSG")
+            checkSumIndex = recievedData.find("CHECKSUM")
+            # if msgStartIndex == -1:
+            #     # message body could not be found, this is either not a user message or the message was corrupted.
+            #     # could be problematic since server responsed don't include this by default.
+            #     continue
+            
+            # our checksum doesn't cover the sender or the header as sent by the server, as this is part of the protocol on the server
+            # side that we cannot alter. Too bad.
+            # Checksum was calculated over MSG <message> SEQ <seqnr> CHECKSUM .
+            # Make sure we only check over this range as well.
+            checkSumString = checkSumString[msgStartIndex:]
+
+            print(checkSumString)
+            checkSumString = list(checkSumString)
+            checkSumBits = checkSum(checkSumString)
+            print(checkSumBits)
+
             # The following code checks the checksum and sequence number. If we were able to recieve this from the server 
             # in the format that we wanted, we could do this cleaner. As it stands, we can only implement such checks in 
             # the user to user messages themselves. Therefore, the checks below will only apply to the messages coming from other 
@@ -363,11 +389,6 @@ def chatReceiverLoop(sock, userActive):
                     # seq area got corrupted, the message is therefore useless. Discard.
                     continue
                 seqNr = int(recievedData[(msgSeqNrLoc + 4):(msgSeqNrLoc + 5)])
-
-                # check checksum here, so that we know that only correct messages pass on to the next check for sequence number.
-                # if the message contained errors before, we dont mind recieving it again in hopes of it being correct this time.
-                # Only if the message contains no bitflips (that we know of) do we proceed to the next check: sequence numbers, where
-                # we try to deal with transfer delay.
 
                 if seqNr in recievedNrs:
                     # we recieved this message already.
