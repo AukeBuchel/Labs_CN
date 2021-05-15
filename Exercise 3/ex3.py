@@ -238,6 +238,16 @@ def responseHandler(data, respTyp, name):
             messageBody = messageBody + " " + word
         print(terminalColors.blue + "[MESSAGE] " +
               terminalColors.end + terminalColors.bold + "@" + sender + ":" + terminalColors.end + messageBody)
+        
+        # send back acknowledgement message:
+        checkString = "MSG ACK" + seqNr + "CHECKSUM"
+        checkString = checkString.encode("utf-8")
+        checkBits = checkSum(checkString)
+        print(checkBits)
+        ackString = "SEND " + sender + " MSG ACK " + seqNr + "CHECKSUM " + checkBits + "\n"
+        ackString = ackString.encode("utf-8")
+        sock.sendto(ackString, host)
+
     elif respTyp == "CurrSetting":
         data = data.replace("VALUE", "").split()
         setting = "Setting"
@@ -292,6 +302,7 @@ def chatInputLoop(sock, userActive, sequenceNr):
             checkSumList = list(checkSumString)
             checkBits = ""
             checkBits = checkSum(checkSumList)
+            # print(checkBits)
             sendString = sendString + "CHECKSUM " + checkBits
             
             sendString += "\n"
@@ -391,12 +402,8 @@ def chatReceiverLoop(sock, userActive):
                 checkSumString = checkSumString[msgStartIndex:(checkSumIndex + 8)]
 
                 noErrors = checkCheck(checkSumString, senderCheckSum)
+                # print(senderCheckSum)
                 print(noErrors)
-
-                # send back acknowledgement message
-                if noErrors == True:
-
-                
 
                 # Here we check the data for the sequence number. First we look for the sequence "~SEQ~" which we append before
                 # the sequence number every time we send. If the sequence number is the same as one we already had, or lower, or more
@@ -424,7 +431,9 @@ def chatReceiverLoop(sock, userActive):
                     continue
 
 
-                # only if sequence number is correct do we want to use this message.
+                # only if sequence number is correct do we want to use this message and
+                # send back acknowledgement message
+
                 recievedNrs.append(seqNr)
 
                 # instead of our client taking the server sent send-ok message as confirmation, we should make it so that we send
@@ -435,6 +444,7 @@ def chatReceiverLoop(sock, userActive):
         except socket.timeout:
             continue
 
+            
         if userActive[0] == True:
             # we do not need the delimiter anymore
             recievedData = cleanString(recievedData)
