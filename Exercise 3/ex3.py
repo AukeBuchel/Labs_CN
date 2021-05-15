@@ -91,8 +91,6 @@ def checkSum(sList):
                 result = result[:i] + "0" + result[(i+1):]
             elif result[i] == "0":
                 result = result[:i] + "1" + result[(i+1):]
-        # result = result[:0] + "0b" + result[1:]
-        # result = int(result, 2)
         # print((result))
         # print(type(result))
         return result
@@ -103,32 +101,11 @@ def checkCheck(msg, checkBits):
     checkBits = checkBits.decode("utf-8")
     msgList = list(msg)
     intList = []
-    # MSGindex = -3
-    # checkSumIndex = -2
     totalSum = 0
-    
-    # now contains a list of integers, simple byte representations of the chars in the message.
-    # compare checksum over DELIVERY <source> <message> SEQ <seqnr> <\n>
-    # but this will be different from our original checksum, so we must delete the "DELIVERY <source> part"
-    # our incoming message includes " MSG " which starts our message field. We skip all that comes before this in our checksum and
-    # in our list, "MSG " will appear as the sequence [77, 83, 71]. If we find this, we know where to start our checksum calculation from. If we do not, we can discard
-    # the message by default.
-    # for i in range(len(msgList)):
-    #     if msgList[i] == 77 and msg[i+1] == 83 and msg[i+2] == 71:
-    #         MSGindex = i
-    # # check for CHECKSUM string as after this is where our checksum shoud stop being calculated
-    # for i in range(len(msgList)):
-    #     if msgList[i] == 67 and msgList[i+1] == 72 and msgList[i+2] == 69 and msgList[i+3] == 67 and msgList[i+4] == 75 and msgList[i+5] == 83 and msgList[i+6] == 85 and msgList[i+7] == 77:
-    #         checkSumIndex = i
-    # now add all binary values of all characters to get the checksum
-    # checkBits = int(checkBits, 2)
     
     for num in range(0, len(msgList)):
         totalSum += msgList[num]
 
-    # print(checkSum)
-    # for i in range((MSGindex + 3), (checkSumIndex + 8)):
-    #     totalSum += msgList[i]
     # now we need to again perform carry addition. only if we end up with 11111111 is the message correct and should it be accepted.
     totalSum = bin(totalSum)
     # delete 0b prefix
@@ -147,7 +124,8 @@ def checkCheck(msg, checkBits):
         myCheckbits = checkSum(intList)
 
         # print(checkBits)
-        # print(myCheckbits)
+        print("checkbits should be: ")
+        print(myCheckbits)
 
         if checkBits == myCheckbits:
             return True
@@ -157,7 +135,8 @@ def checkCheck(msg, checkBits):
         myCheckbits = totalSum
 
         # print(checkBits)
-        # print(myCheckbits)
+        print("checkbits should be: ")
+        print(myCheckbits)
 
         if checkBits == myCheckbits:
             return True
@@ -240,11 +219,13 @@ def responseHandler(data, respTyp, name):
               terminalColors.end + terminalColors.bold + "@" + sender + ":" + terminalColors.end + messageBody)
         
         # send back acknowledgement message:
-        checkString = "MSG ACK" + seqNr + "CHECKSUM"
+        checkString = "MSG ACK " + seqNr + " CHECKSUM"
+        print("Sender ack msg: " + checkString)
         checkString = checkString.encode("utf-8")
         checkBits = checkSum(checkString)
+        print("ACK checksum: ")
         print(checkBits)
-        ackString = "SEND " + sender + " MSG ACK " + seqNr + "CHECKSUM " + checkBits + "\n"
+        ackString = "SEND " + sender + " MSG ACK " + seqNr + " CHECKSUM " + checkBits + " \n"
         ackString = ackString.encode("utf-8")
         sock.sendto(ackString, host)
 
@@ -302,7 +283,8 @@ def chatInputLoop(sock, userActive, sequenceNr):
             checkSumList = list(checkSumString)
             checkBits = ""
             checkBits = checkSum(checkSumList)
-            # print(checkBits)
+            print("Sender checksum: ")
+            print(checkBits)
             sendString = sendString + "CHECKSUM " + checkBits
             
             sendString += "\n"
@@ -400,9 +382,12 @@ def chatReceiverLoop(sock, userActive):
                 # Make sure we only check over this range as well.
                 senderCheckSum = checkSumString[(checkSumIndex + 9):(checkSumIndex + 17)]
                 checkSumString = checkSumString[msgStartIndex:(checkSumIndex + 8)]
-
+                # for ACK: "MSG ACK <seqnr> CHECKSUM"
+                print("going to check checksum from string: ")
+                print(checkSumString)
                 noErrors = checkCheck(checkSumString, senderCheckSum)
-                # print(senderCheckSum)
+                print("Checksum from sender: ")
+                print(senderCheckSum)
                 print(noErrors)
 
                 # Here we check the data for the sequence number. First we look for the sequence "~SEQ~" which we append before
