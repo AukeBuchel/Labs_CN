@@ -449,15 +449,17 @@ def chatReceiverLoop(sock, userActive):
         except ValueError:
             continue
 
-            
-        if userActive[0] == True:
-            # we do not need the delimiter anymore
-            recievedData = cleanString(recievedData)
-            # print("receivedData: " + receivedData)
-            resType = findResponseType(recievedData)
-            # null passed as name variable, as we don't need to check name correctness every time. This could be avoided as it is pretty ugly
-            # by separating the name check function from responseHandler, but that would add more complexity to our code and python doesn't care anyways.
-            responseHandler(recievedData, resType, None)
+        try:
+            if userActive[0] == True:
+                # we do not need the delimiter anymore
+                recievedData = cleanString(recievedData)
+                # print("receivedData: " + receivedData)
+                resType = findResponseType(recievedData)
+                # null passed as name variable, as we don't need to check name correctness every time. This could be avoided as it is pretty ugly
+                # by separating the name check function from responseHandler, but that would add more complexity to our code and python doesn't care anyways.
+                responseHandler(recievedData, resType, None)
+        except:
+            continue
 
 
 # mind your scope please (so threads can access the sock object)
