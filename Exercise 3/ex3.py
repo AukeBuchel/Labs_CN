@@ -313,7 +313,7 @@ def chatInputLoop(sock, userActive, sequenceNr):
             # increment sequence number (global var)
             sequenceNr[0] += 1
             # make sequenceNr wrap around when it exceeds 8 bits. We likely won't need a sequence nr larger than this
-            if sequenceNr[0] == 31:
+            if sequenceNr[0] == 32:
                 sequenceNr[0] = 0
 
         elif inputData.find("SET") == 0:
@@ -400,13 +400,19 @@ def chatReceiverLoop(sock, userActive):
                 # This doesnt work when sending to yourself, because the server doesnt give us a sequence number. Only works
                 # if you have 2 separate terminals sending to eachother.
                 msgSeqNrLoc = recievedData.find("SEQ")
+                isAck = recievedData.find("ACK")
                 # get int version of index.
-                if msgSeqNrLoc == -1:
+                if isAck != -1:
+                    # message is acknowledgement, so we don't check for a message seqnr
+                    continue
+                elif msgSeqNrLoc == -1:
                     # seq area got corrupted, the message is therefore useless. Discard.
                     continue
                 seqNr = int(recievedData[(msgSeqNrLoc + 4):(msgSeqNrLoc + 5)])
-
-                if seqNr in recievedNrs:
+                if seqNr == 31:
+                    # clear out our list of recieved sequence numbers, as the sender's seqnr will be wrapping around after this one
+                    recievedNrs = [-1]
+                elif seqNr in recievedNrs:
                     # we recieved this message already.
                     continue
                 elif seqNr < max(recievedNrs):
