@@ -303,11 +303,13 @@ def chatInputLoop(sock, userActive, sequenceNr):
             # we can do this by checking the second boolean in userActive[]. The response handling thread should change this bool
             # to true when it recieves a message containing SET-OK, prompting a loop in this function to stop sending the packet over and over again.
             # We start a timer here when sending to keep track of our send time.
-            while not (userActive[1] == True and userActive[2] == True):
+            tryNr = 0
+            while not (userActive[1] == True and userActive[2] == True) and tryNr < 10:
                 # append sequencenr to message
                 sock.sendto(sendString, host)
                 print(terminalColors.yellow + "[STATUS] " + terminalColors.end + terminalColors.bold+  "Waiting for acknowledgement...\n" + terminalColors.end)
-                time.sleep(2)
+                time.sleep(1)
+                tryNr += 1
                 if userActive[1] == True:
                     break
             # increment sequence number (global var)
@@ -321,7 +323,7 @@ def chatInputLoop(sock, userActive, sequenceNr):
             if len(inputData) == 3:
                 sendString = "SET " + inputData[1] + " " + inputData[2] + "\n"
             elif len(inputData) == 4:
-                sendString = "SET " + inputData[1] + " " + inputData[2] + inputData[3] + "\n"
+                sendString = "SET " + inputData[1] + " " + inputData[2] + " " + inputData[3] + "\n"
             sendString = sendString.encode("utf-8")
             sock.sendto(sendString, host)
         elif inputData.find("GET") == 0:
@@ -348,6 +350,7 @@ def chatReceiverLoop(sock, userActive):
         # while "\n" not in recievedData and userActive[0] == True:
         try:
             data, addr = sock.recvfrom(65565)
+            # print(data)
             # deepcopy of data so that we can pass this to our checksum checker later on before it is converted.
             checkSumString = copy.deepcopy(data)
             recievedData += data.decode("utf-8")
@@ -435,19 +438,25 @@ def chatReceiverLoop(sock, userActive):
                 # our own acknowledgement here. A corrupted message would still be sent correctly according to the server, but we can still
                 # find out in this try part that the message got corrupted along the way. Thus, an automatic response should be sent here.
                 # something like @<source> ACKNOWLEDGED should do.
+            if userActive[0] == True:
+                        # we do not need the delimiter anymore
+                        recievedData = cleanString(recievedData)
+                        # print("receivedData: " + receivedData)
+                        resType = findResponseType(recievedData)
+                        # null passed as name variable, as we don't need to check name correctness every time. This could be avoided as it is pretty ugly
+                        # by separating the name check function from responseHandler, but that would add more complexity to our code and python doesn't care anyways.
+                        responseHandler(recievedData, resType, None)
 
         except socket.timeout:
             continue
+        except ValueError:
+            print(terminalColors.red + "[ERROR] " + terminalColors.end + terminalColors.bold + "Your message could not be decoded." + terminalColors.end)
+            continue
+        except:
+            continue
 
             
-        if userActive[0] == True:
-            # we do not need the delimiter anymore
-            recievedData = cleanString(recievedData)
-            # print("receivedData: " + receivedData)
-            resType = findResponseType(recievedData)
-            # null passed as name variable, as we don't need to check name correctness every time. This could be avoided as it is pretty ugly
-            # by separating the name check function from responseHandler, but that would add more complexity to our code and python doesn't care anyways.
-            responseHandler(recievedData, resType, None)
+        
 
 
 # mind your scope please (so threads can access the sock object)
