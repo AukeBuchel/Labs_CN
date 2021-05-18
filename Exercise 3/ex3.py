@@ -389,6 +389,8 @@ def chatReceiverLoop(sock, userActive):
                 # print("going to check checksum from string: ")
                 # print(checkSumString)
                 noErrors = checkCheck(checkSumString, senderCheckSum)
+                if noErrors == False:
+                    continue
                 # print("Checksum from sender: ")
                 # print(senderCheckSum)
                 # print(noErrors)
@@ -403,7 +405,7 @@ def chatReceiverLoop(sock, userActive):
                 # get int version of index.
                 if isAck != -1:
                     # message is acknowledgement, so we don't check for a message seqnr
-                    continue
+                    pass
                 elif msgSeqNrLoc == -1:
                     # seq area got corrupted, the message is therefore useless. Discard.
                     continue
