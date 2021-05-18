@@ -51,15 +51,7 @@ def findResponseType(data):
 def checkSum(sList):
     # pass this function only the message and sequence number part of the message.
     result = 0
-    # print(sList)
-        # to perform binary addition, we simply add the values from sList, convert to binary, check
-        # the length.
-        # if length > 8:
-        #       cut all MSB until length is 8 (10 with the 0b prefix)
-        #       convert result to number
-        #       perform addition again (so call with new numbers recursively)
-        # else:
-        #       invert all bits, return checksum.
+   
     for i in range(len(sList)):
         result += sList[i]
     # print(result)
@@ -242,7 +234,7 @@ def responseHandler(data, respTyp, name):
     elif respTyp == "Set":
         print(terminalColors.green + "[SET-OK]" + terminalColors.end)
     elif respTyp == "userACK":
-        userActive[1] = True
+        userActive[2] = True
     else:
         raise("Message could not be handled")
 
@@ -298,20 +290,24 @@ def chatInputLoop(sock, userActive, sequenceNr):
             # we do have to reset the acknowledgement bool every time we send or we will never enter our loop again :)
             # this bool tells us if the message was acknowledged or not.
             userActive[1] = False
+            userActive[2] = False
             # sock.sendto(sendString.encode("utf-8"), host)
             # now we have to somehow make sure our message is sent properly, otherwise, the client should try again until it gets confirmation.
             # we can do this by checking the second boolean in userActive[]. The response handling thread should change this bool
             # to true when it recieves a message containing SET-OK, prompting a loop in this function to stop sending the packet over and over again.
             # We start a timer here when sending to keep track of our send time.
             tryNr = 0
-            while not (userActive[1] == True and userActive[2] == True) and tryNr < 10:
-                # append sequencenr to message
-                sock.sendto(sendString, host)
-                print(terminalColors.yellow + "[STATUS] " + terminalColors.end + terminalColors.bold+  "Waiting for acknowledgement...\n" + terminalColors.end)
-                time.sleep(1)
-                tryNr += 1
-                if userActive[1] == True:
-                    break
+            try:
+                while not (userActive[1] == True and userActive[2] == True): #and tryNr < 20:
+                    # append sequencenr to message
+                    sock.sendto(sendString, host)
+                    print(terminalColors.yellow + "[STATUS] " + terminalColors.end + terminalColors.bold+  "Waiting for acknowledgement...\n" + terminalColors.end)
+                    time.sleep(0.5)
+                    tryNr += 1
+                    if userActive[1] == True and userActive[2] == True:
+                        break
+            except:
+                pass
             # increment sequence number (global var)
             sequenceNr[0] += 1
             # make sequenceNr wrap around when it exceeds 8 bits. We likely won't need a sequence nr larger than this
@@ -439,13 +435,13 @@ def chatReceiverLoop(sock, userActive):
                 # find out in this try part that the message got corrupted along the way. Thus, an automatic response should be sent here.
                 # something like @<source> ACKNOWLEDGED should do.
             if userActive[0] == True:
-                        # we do not need the delimiter anymore
-                        recievedData = cleanString(recievedData)
-                        # print("receivedData: " + receivedData)
-                        resType = findResponseType(recievedData)
-                        # null passed as name variable, as we don't need to check name correctness every time. This could be avoided as it is pretty ugly
-                        # by separating the name check function from responseHandler, but that would add more complexity to our code and python doesn't care anyways.
-                        responseHandler(recievedData, resType, None)
+                # we do not need the delimiter anymore
+                recievedData = cleanString(recievedData)
+                # print("receivedData: " + receivedData)
+                resType = findResponseType(recievedData)
+                # null passed as name variable, as we don't need to check name correctness every time. This could be avoided as it is pretty ugly
+                # by separating the name check function from responseHandler, but that would add more complexity to our code and python doesn't care anyways.
+                responseHandler(recievedData, resType, None)
 
         except socket.timeout:
             continue
