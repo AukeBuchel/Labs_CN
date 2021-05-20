@@ -128,20 +128,12 @@ def checkCheck(msg, checkBits):
         intList.append(num2)
         myCheckbits = checkSum(intList)
 
-        # print(checkBits)
-        # print("checkbits should be: ")
-        # print(myCheckbits)
-
         if checkBits == myCheckbits:
             return True
         else:
             return False
     elif len(totalSum) == 8:
         myCheckbits = totalSum
-
-        # print(checkBits)
-        # print("checkbits should be: ")
-        # print(myCheckbits)
 
         if checkBits == myCheckbits:
             return True
@@ -348,12 +340,13 @@ def chatInputLoop(sock, userActive, sequenceNr):
             if sequenceNr[0] == 31:
                 sequenceNr[0] = 0
 
+        # server settings
         elif inputData.find("SET") == 0:
             inputData = inputData.split()
             if len(inputData) == 3:
                 sendString = "SET " + inputData[1] + " " + inputData[2] + "\n"
             elif len(inputData) == 4:
-                sendString = "SET " + inputData[1] + " " + inputData[2] + inputData[3] + "\n"
+                sendString = "SET " + inputData[1] + " " + inputData[2] + " " + inputData[3] + "\n"
             sendString = sendString.encode("utf-8")
             sock.sendto(sendString, host)
         elif inputData.find("GET") == 0:
@@ -424,11 +417,6 @@ def chatReceiverLoop(sock, userActive):
                 # find MSG string and only check from there
                 msgStartIndex = recievedData.find("MSG")
                 checkSumIndex = recievedData.find("CHECKSUM")
-
-                # if msgStartIndex == -1:
-                #     # message body could not be found, this is either not a user message or the message was corrupted.
-                #     # could be problematic since server responsed don't include this by default.
-                #     continue
                 
                 # our checksum doesn't cover the sender or the header as sent by the server, as this is part of the protocol on the server
                 # side that we cannot alter. Too bad.
@@ -483,6 +471,8 @@ def chatReceiverLoop(sock, userActive):
         except socket.timeout:
             continue
         except ValueError:
+            continue
+        except:
             continue
 
         try:
