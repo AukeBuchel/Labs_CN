@@ -13,10 +13,12 @@ class terminalColors:
         end = '\033[0m'
         bold = '\033[1m'
 
+
 def cleanString(string):
     # string = string.strip()
     string = string.replace("\n", '')
     return string
+
 
 def findResponseType(data):
     if data.find("HELLO") == 0:
@@ -97,6 +99,7 @@ def checkSum(sList):
         # print(type(result))
         return result
 
+
 def checkCheck(msg, checkBits):
     # pass this a message in encoded string form to check 
     # convert all chars to binary, we get them in utf8 encoded, so making a list out of them should give us the individual byte objects.
@@ -144,6 +147,23 @@ def checkCheck(msg, checkBits):
             return True
         else:
             return False
+
+
+def sendAck(data, seqNr):
+        seqindex = data.find("SEQ")
+        seqNr = data[(seqindex + 4):(seqindex + 5)]
+        checkString = "MSG ACK SEQ" + seqNr + " CHECKSUM"
+        # print("Sender ack msg: " + checkString)
+        checkString = checkString.encode("utf-8")
+        checkBits = checkSum(checkString)
+        # print("ACK checksum: ")
+        # print(checkBits)
+        data = data.replace("DELIVERY", "").split()
+        sender = data[0]
+        ackString = "SEND " + sender + " MSG ACK SEQ" + seqNr + " CHECKSUM " + checkBits + " \n"
+        ackString = ackString.encode("utf-8")
+        sock.sendto(ackString, host)
+
 
 def responseHandler(data, respTyp, name):    
     if respTyp == "Hello":
@@ -193,14 +213,18 @@ def responseHandler(data, respTyp, name):
               "[ERROR] " + terminalColors.end + terminalColors.bold + "The user you tried to reach is currently offline." + terminalColors.end)
     elif respTyp == "Sent":
         #   set "global" bool to true so that sending function knows it can stop making new attempts and wait for next input
+        # if userActive[1] == False: 
+            # print(terminalColors.green + "[OK] " +
+            #   terminalColors.end + terminalColors.bold + "Your message was sent successfully." + terminalColors.end)
         userActive[1] = True
-        print(terminalColors.green + "[OK] " +
-              terminalColors.end + terminalColors.bold + "Your message was sent successfully." + terminalColors.end)
+        # print(terminalColors.green + "[OK] " +
+        #       terminalColors.end + terminalColors.bold + "Your message was sent successfully." + terminalColors.end)
         
     elif respTyp == "NewMsg":
         # delete SEQ <seqnr> from message body
         seqindex = data.find("SEQ")
         seqNr = data[(seqindex + 4):(seqindex + 5)]
+        sendAck(data, seqNr)
         data = data.replace(seqNr, "")
         data = data.replace(" SEQ ", "")
 
@@ -220,20 +244,21 @@ def responseHandler(data, respTyp, name):
         print(terminalColors.blue + "[MESSAGE] " +
               terminalColors.end + terminalColors.bold + "@" + sender + ":" + terminalColors.end + messageBody)
         
-        # send back acknowledgement message:
-        checkString = "MSG ACK " + seqNr + " CHECKSUM"
-        # print("Sender ack msg: " + checkString)
-        checkString = checkString.encode("utf-8")
-        checkBits = checkSum(checkString)
-        # print("ACK checksum: ")
-        # print(checkBits)
-        ackString = "SEND " + sender + " MSG ACK " + seqNr + " CHECKSUM " + checkBits + " \n"
-        ackString = ackString.encode("utf-8")
-        sock.sendto(ackString, host)
+        
+        # # send back acknowledgement message:
+        # checkString = "MSG ACK SEQ" + seqNr + " CHECKSUM"
+        # # print("Sender ack msg: " + checkString)
+        # checkString = checkString.encode("utf-8")
+        # checkBits = checkSum(checkString)
+        # # print("ACK checksum: ")
+        # # print(checkBits)
+        # ackString = "SEND " + sender + " MSG ACK SEQ" + seqNr + " CHECKSUM " + checkBits + " \n"
+        # ackString = ackString.encode("utf-8")
+        # sock.sendto(ackString, host)
 
     elif respTyp == "CurrSetting":
         data = data.replace("VALUE", "").split()
-        setting = "Setting"
+        setting = "Setting" # server apparently doesnt give back setting name.
         value = data[0]
         if len(data) > 2:
             upper = data[2]
@@ -243,6 +268,8 @@ def responseHandler(data, respTyp, name):
         print(terminalColors.green + "[SET-OK]" + terminalColors.end)
     elif respTyp == "userACK":
         # print("ack recieved")
+        print(terminalColors.green + "[OK] " +
+              terminalColors.end + terminalColors.bold + "Your message was sent successfully." + terminalColors.end)
         userActive[2] = True
     else:
         raise("Message could not be handled")
@@ -300,16 +327,19 @@ def chatInputLoop(sock, userActive, sequenceNr):
             # this bool tells us if the message was acknowledged or not.
             userActive[1] = False
             userActive[2] = False
+            maxAttemptNumber = 20
+            currAttemptNumber = 0
             # sock.sendto(sendString.encode("utf-8"), host)
             # now we have to somehow make sure our message is sent properly, otherwise, the client should try again until it gets confirmation.
             # we can do this by checking the second boolean in userActive[]. The response handling thread should change this bool
             # to true when it recieves a message containing SET-OK, prompting a loop in this function to stop sending the packet over and over again.
             # We start a timer here when sending to keep track of our send time.
-            while not (userActive[1] == True and userActive[2] == True):
+            while (userActive[1] == False or userActive[2] == False) and currAttemptNumber < maxAttemptNumber:
                 # append sequencenr to message
                 sock.sendto(sendString, host)
                 print(terminalColors.yellow + "[STATUS] " + terminalColors.end + terminalColors.bold+  "Waiting for acknowledgement...\n" + terminalColors.end)
                 time.sleep(0.5)
+                currAttemptNumber += 1
                 if userActive[2] == True:
                     break
             # increment sequence number (global var)
@@ -340,6 +370,7 @@ def chatInputLoop(sock, userActive, sequenceNr):
 
 def chatReceiverLoop(sock, userActive):
     recievedNrs = [-1]
+    ackedNrs = [-1]
 
     while userActive[0] == True:
         recievedData = ""
@@ -368,14 +399,21 @@ def chatReceiverLoop(sock, userActive):
             if tempResCheck == "userACK":
                 msgStartIndex = recievedData.find("MSG")
                 checkSumIndex = recievedData.find("CHECKSUM")
+                seqNrIndex = recievedData.find("SEQ")
+                senderSeqNr = recievedData[(seqNrIndex + 3): (seqNrIndex + 4)]
+                # print(senderSeqNr)
                 senderCheckSum = checkSumString[(checkSumIndex + 9):(checkSumIndex + 17)]
                 checkSumString = checkSumString[msgStartIndex:(checkSumIndex + 8)]
                 noErrors = checkCheck(checkSumString, senderCheckSum)
+                # print(noErrors)
                 if noErrors == False:
                     continue
+                # deal with duplicate ack numbers (experimental)
+                elif senderSeqNr in ackedNrs:
+                    continue
 
-
-            if tempResCheck == "NewMsg":
+                ackedNrs.append(senderSeqNr)
+            elif tempResCheck == "NewMsg":
                 
                 # check checksum here, so that we know that only correct messages pass on to the next check for sequence number.
                 # if the message contained errors before, we dont mind recieving it again in hopes of it being correct this time.
@@ -404,9 +442,6 @@ def chatReceiverLoop(sock, userActive):
                 noErrors = checkCheck(checkSumString, senderCheckSum)
                 if noErrors == False:
                     continue
-                # print("Checksum from sender: ")
-                # print(senderCheckSum)
-                # print(noErrors)
 
                 # Here we check the data for the sequence number. First we look for the sequence "~SEQ~" which we append before
                 # the sequence number every time we send. If the sequence number is the same as one we already had, or lower, or more
@@ -421,7 +456,8 @@ def chatReceiverLoop(sock, userActive):
                 seqNr = int(recievedData[(msgSeqNrLoc + 4):(msgSeqNrLoc + 5)])
 
                 if seqNr in recievedNrs:
-                    # we recieved this message already.
+                    # we recieved this message already. Our acknowledgement must have been lost
+                    sendAck(recievedData, seqNr)
                     continue
                 elif seqNr < max(recievedNrs):
                     # this message is older than the newest one we recieved correctly and we assume was stuck in transmission
